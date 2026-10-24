@@ -1,0 +1,42 @@
+Desde la carpeta ubuntu20, construir y crear el contenedor por primera vez:
+HOST_UID=$(id -u) HOST_GID=$(id -g) docker compose up -d --build
+
+docker start ubuntu20_foxy	==> Arrancar contenedor
+docker stop ubuntu20_foxy	==> Parar contenedor
+
+docker exec -it ubuntu20_foxy bash	==> Abrir terminal (ROS 2 Foxy se carga automáticamente)
+
+
+
+
+Simulacion
+
+Arrancar los cuatro comandos de abajo con un solo script y cerrar todo con Ctrl+C:
+  cd ~/carpeta_compartida/husarion_ws
+  ./simulacion.sh
+
+El script conserva el entorno ROS de la terminal y lanza los mismos comandos manuales.
+
+1. Lanzar gazebo
+  cd ~/carpeta_compartida/husarion_ws
+  source /usr/share/gazebo/setup.bash
+  source install/setup.bash
+  ros2 launch rosbot_description rosbot_sim.launch.py use_sim_time:=true gui:=true camera:=true
+
+
+2. Navegacion
+  cd ~/carpeta_compartida/husarion_ws
+  source install/setup.bash
+  ros2 launch rosbot_description rosbot_navigation_sim.launch.py   use_sim_time:=true   params:="$(ros2 pkg prefix rosbot_description)/share/rosbot_description/config/nav2_params_sim.yaml"
+
+
+3. Slam
+  cd ~/carpeta_compartida/husarion_ws
+  source install/setup.bash
+  ros2 launch rosbot_description slam_toolbox_sim.launch.py
+
+
+4. Rviz
+  cd ~/carpeta_compartida/husarion_ws
+  source install/setup.bash
+  ros2 run rviz2 rviz2 -d config/rviz_config.rviz --ros-args -p use_sim_time:=true

@@ -1,0 +1,53 @@
+# Productos de colcon/CMake: se reconstruyen en cada ordenador.
+build/
+install/
+log/
+logs/
+CMakeCache.txt
+CMakeFiles/
+compile_commands.json
+
+# Dependencias descargadas, cachés y binarios generados.
+node_modules/
+__pycache__/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+*.py[cod]
+*.o
+*.a
+*.so
+*.so.*
+*.node
+*.deb
+*.tar
+*.tar.gz
+*.tar.bz2
+*.tgz
+*.zip
+
+# Configuración local, capturas y datos de ejecución.
+.env
+.env.*
+!.env.example
+.ros/
+.gazebo/
+mapas/
+*.db3
+*.mcap
+*.bag
+*.log
+core
+core.*
+/carpeta_compartida/validacion_*/
+
+# Editores y copias temporales.
+.vscode/
+.idea/
+.DS_Store
+*~
+*.bak
+*.orig
+*.rej
+*.before_*

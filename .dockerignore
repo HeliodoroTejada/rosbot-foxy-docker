@@ -1,0 +1,6 @@
+carpeta_compartida
+.git
+.env
+.env.*
+*.tar
+*.tar.gz

@@ -1,0 +1,12 @@
+cmake_minimum_required(VERSION 3.5)
+project(rosbot_pro_bringup)
+find_package(ament_cmake REQUIRED)
+install(DIRECTORY launch DESTINATION share/${PROJECT_NAME})
+install(PROGRAMS scripts/pose_to_odom.py scripts/cmd_vel_watchdog.py DESTINATION lib/${PROJECT_NAME})
+install(FILES scripts/planar_math.py DESTINATION lib/${PROJECT_NAME})
+if(BUILD_TESTING)
+  find_package(ament_cmake_pytest REQUIRED)
+  ament_add_pytest_test(cmd_vel_watchdog test/test_cmd_vel_watchdog.py TIMEOUT 30
+    ENV ROS_DOMAIN_ID=167 ROS_LOCALHOST_ONLY=1)
+endif()
+ament_package()

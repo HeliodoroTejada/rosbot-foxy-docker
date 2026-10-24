@@ -1,0 +1,21 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>rosbot_pro_bringup</name>
+  <version>0.1.0</version>
+  <description>Bringup for the supplied legacy Foxy ROSbot 2 PRO workspace.</description>
+  <maintainer email="maintainer@example.com">ROSbot workspace maintainer</maintainer>
+  <license>MIT</license>
+  <buildtool_depend>ament_cmake</buildtool_depend>
+  <exec_depend>launch</exec_depend>
+  <exec_depend>launch_ros</exec_depend>
+  <exec_depend>rclpy</exec_depend>
+  <exec_depend>rcl_interfaces</exec_depend>
+  <exec_depend>geometry_msgs</exec_depend>
+  <exec_depend>nav_msgs</exec_depend>
+  <exec_depend>tf2_ros</exec_depend>
+  <exec_depend>rosbot_description</exec_depend>
+  <exec_depend>rplidar_ros</exec_depend>
+  <exec_depend>astra_camera</exec_depend>
+  <test_depend>ament_cmake_pytest</test_depend>
+  <export><build_type>ament_cmake</build_type></export>
+</package>
