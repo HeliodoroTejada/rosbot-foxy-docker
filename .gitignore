@@ -30,7 +30,6 @@ __pycache__/
 # Configuración local, capturas y datos de ejecución.
 .env
 .env.*
-!.env.example
 .ros/
 .gazebo/
 mapas/

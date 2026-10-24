@@ -49,4 +49,4 @@ Los scripts reales cargan `scripts/entorno_experimento.bash`, usan por defecto d
 
 `./simulacion.sh --help`, `./real_onboard.sh --help`, `./real_offboard.sh --help` y `./compilar.sh --help` muestran ayuda. Gazebo/RViz requieren `DISPLAY` y acceso X11. Los scripts no recrean el contenedor ni activan la GPU automáticamente.
 
-Se han observado bloqueos al reiniciar Nav2 y errores gráficos/de cierre en Foxy; los scripts no se presentan como solución a esos fallos. Red, cámara física y watchdog se detallan en [OPERACION_ROSBOT.md](../../OPERACION_ROSBOT.md).
+Se han observado bloqueos al reiniciar Nav2 y errores gráficos/de cierre en Foxy; los scripts no se presentan como solución a esos fallos. Red, cámara física y watchdog se detallan en [README.md](../../README.md#robot-real-y-ordenador-externo).

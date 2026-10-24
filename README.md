@@ -13,7 +13,7 @@ La configuración se ha probado en Linux x86_64. No se garantiza el mismo funcio
 ## Clonar y lanzar la simulación
 
 ```bash
-git clone https://github.com/HeliodoroTejada/rosbot-foxy-docker.git
+git clone git@github.com:HeliodoroTejada/rosbot-foxy-docker.git
 cd rosbot-foxy-docker
 
 # Permitir al usuario del contenedor acceder a la pantalla del host.
@@ -66,8 +66,6 @@ xhost -si:localuser:"$(id -un)"
 
 ```text
 Dockerfile, compose.yaml      Imagen Foxy y contenedor con red host/X11
-compose.gpu.yaml              GPU Intel/AMD opcional
-.env.example                  Valores ROS y opciones locales de ejemplo
 carpeta_compartida/husarion_ws/
   compilar.sh                 Compilación local de simulación o hardware
   simulacion.sh               Los cuatro comandos manuales con salida por Ctrl+C
@@ -93,13 +91,37 @@ Esta opción descarga y compila el SDK OpenNI2 fijado por el paquete Astra; requ
 
 El Compose de simulación no expone puertos seriales/USB físicos. El uso del contenedor en hardware exige configurar sus dispositivos y permisos reales; alternativamente ejecutar el onboard en el sistema Foxy del robot. Puertos, TF físicas, firmware y frenado necesitan validación sobre el equipo real.
 
-## GPU opcional y límites conocidos
+Los scripts reales habilitan la comunicación fuera de localhost y usan reloj real. Sincronizar los relojes de robot y PC; mantener una sola fuente de `odom → base_link` y otra de `map → odom`. El watchdog local entrega ceros si caducan los comandos durante 0,5 s; no sustituye el timeout del firmware ni la parada física. El driver Astra actual no completa CameraInfo RGB ni `/camera/points` para las vistas de cámara/nube de RViz.
 
-Por defecto se usa renderizado por software para no depender de una GPU concreta. El overlay Intel/AMD se explica en [OPERACION_ROSBOT.md](OPERACION_ROSBOT.md). Sus valores de dispositivo y grupo son específicos de cada host; no se deben copiar a ciegas de otro ordenador.
+## Configuración y límites conocidos
+
+Sólo se utiliza `compose.yaml`. Los valores por defecto están en ese archivo: dominio ROS 20, Fast DDS, simulación limitada a localhost y renderizado por software. No hace falta crear un `.env`. Para cambiar una variable, exportarla antes de crear el contenedor; por ejemplo:
+
+```bash
+export ROS_DOMAIN_ID=30
+docker compose up -d
+```
+
+El renderizado por software evita depender de la GPU del ordenador. El acceso directo a una GPU requiere adaptar dispositivos, permisos y driver en `compose.yaml` para ese host.
 
 La automatización y la compilación reproducible no corrigen por sí solas los fallos conocidos de este stack Foxy: se han observado bloqueos de Nav2 al reiniciar, errores de shader GLSL y fallos de cierre de RViz. Comprobar `/map`, TF y estados lifecycle antes de enviar objetivos; no se declara estabilidad prolongada ni validación física del robot.
 
-Más detalles: [ARRANQUE.md](carpeta_compartida/husarion_ws/ARRANQUE.md), [operación y red](OPERACION_ROSBOT.md) y [origen de componentes](THIRD_PARTY.md).
+Los comandos y opciones de los scripts están en [ARRANQUE.md](carpeta_compartida/husarion_ws/ARRANQUE.md).
+
+## Origen y licencias
+
+Se conservan los avisos y licencias incluidos en las fuentes. Cada paquete mantiene su declaración en `package.xml`.
+
+| Componente | Origen y licencia conservados |
+| --- | --- |
+| `rosbot_ros` (`rosbot_description`) | Husarion `rosbot_description`, rama Foxy, con adaptaciones locales; MIT en su `package.xml`. |
+| `ros_astra_camera` (`astra_camera`) | Driver Orbbec Astra; BSD en su `package.xml` y avisos originales. |
+| `rplidar_ros` | Driver RPLIDAR; [licencia BSD](carpeta_compartida/husarion_ws/src/rplidar_ros/LICENSE). |
+| `rosbot_pro_bringup` | Bringup y adaptaciones locales; MIT en su `package.xml`. |
+| Willow Garage | OSRF `gazebo_models`, revisión `8163eb4b5e7e21985c6591d1c0bfb56468c0093f`; [licencia CC BY 3.0](carpeta_compartida/husarion_ws/src/rosbot_ros/models/willowgarage/LICENSE) y [procedencia](carpeta_compartida/husarion_ws/src/rosbot_ros/models/willowgarage/UPSTREAM.md). |
+| OpenNI2 Orbbec | El driver Astra descarga `ob-tim-liu/OpenNI2`, commit `bbabd58c85d7c8f945f4f679bf73b653bd9df3e7`, al compilar hardware. Sus avisos se conservan en el SDK descargado; sus binarios no se incluyen en Git. |
+
+ROS, Gazebo y las dependencias instaladas por Docker conservan las licencias de sus respectivos paquetes.
 
 ## Validación del clon limpio
 
