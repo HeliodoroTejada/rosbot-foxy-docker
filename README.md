@@ -13,7 +13,7 @@ La configuración se ha probado en Linux x86_64. No se garantiza el mismo funcio
 ## Clonar y lanzar la simulación
 
 ```bash
-git clone <URL_DEL_REPOSITORIO_PRIVADO> rosbot-foxy-docker
+git clone https://github.com/HeliodoroTejada/rosbot-foxy-docker.git
 cd rosbot-foxy-docker
 
 # Permitir al usuario del contenedor acceder a la pantalla del host.
