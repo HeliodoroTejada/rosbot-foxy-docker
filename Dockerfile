@@ -2,27 +2,16 @@ FROM ros:foxy-ros-base-focal
 
 ARG DEBIAN_FRONTEND=noninteractive
 
-ARG USERNAME=helio
+ARG USERNAME=user
 ARG USER_UID=1000
 ARG USER_GID=1000
 
 USER root
 
+# Herramientas comunes a ambas imagenes.
 RUN apt-get update && apt-get install -y \
     sudo \
-    ros-foxy-desktop \
-    ros-foxy-gazebo-dev \
-    ros-foxy-gazebo-ros-pkgs \
-    ros-foxy-nav2-bringup \
-    ros-foxy-joint-state-publisher \
-    ros-foxy-slam-toolbox \
-    ros-foxy-rmw-cyclonedds-cpp \
-    ros-foxy-xacro \
-    libusb-1.0-0-dev \
-    python2.7 \
     python3-pip \
-    python3-serial \
-    mesa-utils \
     cmake \
     curl \
     wget \
@@ -34,6 +23,22 @@ RUN apt-get update && apt-get install -y \
     iputils-ping \
     net-tools \
     usbutils \
+    && rm -rf /var/lib/apt/lists/*
+
+# Paquetes especificos de ROS Foxy y sus proyectos.
+RUN apt-get update && apt-get install -y \
+    ros-foxy-desktop \
+    ros-foxy-gazebo-dev \
+    ros-foxy-gazebo-ros-pkgs \
+    ros-foxy-nav2-bringup \
+    ros-foxy-joint-state-publisher \
+    ros-foxy-slam-toolbox \
+    ros-foxy-rmw-cyclonedds-cpp \
+    ros-foxy-xacro \
+    libusb-1.0-0-dev \
+    python2.7 \
+    python3-serial \
+    mesa-utils \
     && rm -rf /var/lib/apt/lists/*
 
 # Herramientas y cabeceras para reconstruir los paquetes desde un clon limpio.

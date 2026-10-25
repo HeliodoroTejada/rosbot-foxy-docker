@@ -25,14 +25,14 @@ services:
       - DISPLAY=${DISPLAY}
       - QT_X11_NO_MITSHM=1
       - LIBGL_ALWAYS_SOFTWARE=${LIBGL_ALWAYS_SOFTWARE:-1}
-      - ROS_DOMAIN_ID=${ROS_DOMAIN_ID:-20}
+      - ROS_DOMAIN_ID=${ROS_DOMAIN_ID:-0}
       - ROS_LOCALHOST_ONLY=${ROS_LOCALHOST_ONLY:-1}
       - RMW_IMPLEMENTATION=${RMW_IMPLEMENTATION:-rmw_fastrtps_cpp}
 
     volumes:
-      - ./carpeta_compartida:/home/helio/carpeta_compartida
+      - ./carpeta_compartida:/home/user/carpeta_compartida
       - /tmp/.X11-unix:/tmp/.X11-unix:rw
 
-    working_dir: /home/helio/carpeta_compartida
+    working_dir: /home/user/carpeta_compartida
 
     command: sleep infinity
