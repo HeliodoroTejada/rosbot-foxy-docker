@@ -5,10 +5,10 @@ HOST_UID=$(id -u) HOST_GID=$(id -g) docker compose up -d --build
 ```
 # Correr contenedor
 ```bash
-docker start ubuntu20_foxy	==> Arrancar contenedor
-docker stop ubuntu20_foxy	==> Parar contenedor
+docker start ubuntu20_foxy_rosbot	==> Arrancar contenedor
+docker stop ubuntu20_foxy_rosbot	==> Parar contenedor
 
-docker exec -it ubuntu20_foxy bash	==> Abrir terminal (ROS 2 Foxy se carga automáticamente)
+docker exec -it ubuntu20_foxy_rosbot bash	==> Abrir terminal (ROS 2 Foxy se carga automáticamente)
 ```
 
 ## Compilar desde cero
