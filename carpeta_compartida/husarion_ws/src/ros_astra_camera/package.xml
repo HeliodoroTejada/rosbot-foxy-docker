@@ -17,6 +17,15 @@
   <depend>libusb-1.0-dev</depend>  
   <depend>rclcpp</depend>
   <depend>sensor_msgs</depend>
+  <depend>depth_image_proc</depend>
+  <depend>image_geometry</depend>
+  <depend>message_filters</depend>
+
+  <exec_depend>launch</exec_depend>
+  <exec_depend>launch_ros</exec_depend>
+
+  <test_depend>ament_cmake_pytest</test_depend>
+  <test_depend>rclpy</test_depend>
 
   <export>
     <build_type>ament_cmake</build_type>

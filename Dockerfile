@@ -33,6 +33,7 @@ RUN apt-get update && apt-get install -y \
     ros-foxy-nav2-bringup \
     ros-foxy-joint-state-publisher \
     ros-foxy-slam-toolbox \
+    ros-foxy-depth-image-proc \
     ros-foxy-rmw-cyclonedds-cpp \
     ros-foxy-xacro \
     libusb-1.0-0-dev \

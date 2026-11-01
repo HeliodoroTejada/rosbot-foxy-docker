@@ -17,6 +17,17 @@ find_package(sensor_msgs REQUIRED)
 find_package(builtin_interfaces REQUIRED)
 find_package(rmw_implementation_cmake REQUIRED)
 find_package(Boost REQUIRED COMPONENTS system thread)
+find_package(depth_image_proc REQUIRED)
+find_package(image_geometry REQUIRED)
+find_package(message_filters REQUIRED)
+
+add_executable(depth_to_cloud_node src/depth_to_cloud_node.cpp)
+ament_target_dependencies(depth_to_cloud_node
+  rclcpp sensor_msgs depth_image_proc image_geometry message_filters
+)
+install(TARGETS depth_to_cloud_node
+  DESTINATION lib/${PROJECT_NAME}
+)
 
 option(FILTER "OB Filter library" ON)
 
@@ -120,6 +131,16 @@ install(FILES 56-orbbec-usb.rules
 install(PROGRAMS scripts/create_udev_rules
   DESTINATION lib/${PROJECT_NAME}
 )
+
+install(DIRECTORY launch
+  DESTINATION share/${PROJECT_NAME}
+)
+
+if(BUILD_TESTING)
+  find_package(ament_cmake_pytest REQUIRED)
+  ament_add_pytest_test(depth_to_cloud test/test_depth_to_cloud.py TIMEOUT 45
+    ENV ROS_DOMAIN_ID=168 ROS_LOCALHOST_ONLY=1)
+endif()
 
 ament_export_include_directories(include)
 ament_export_libraries(astra_driver_lib astra_wrapper)

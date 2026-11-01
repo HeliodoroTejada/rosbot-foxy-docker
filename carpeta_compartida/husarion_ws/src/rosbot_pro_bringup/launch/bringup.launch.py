@@ -1,13 +1,16 @@
 """Alternative to rosbot_pro.launch.py: do not run both together."""
 import math
+import os
+from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, OpaqueFunction
+from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, OpaqueFunction
+from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 
 
 DEFAULTS = {
-    'start_base': 'true', 'start_lidar': 'true', 'start_camera': 'false',
+    'start_base': 'true', 'start_lidar': 'true', 'start_camera': 'true',
     'command_watchdog': 'true', 'command_timeout': '0.5',
     'camera_width': '640', 'camera_height': '480', 'camera_fps': '30',
     'publish_wheel_frames': 'true',
@@ -94,6 +97,11 @@ def setup(context):
                         ('depth', '/camera/depth/image_raw'),
                         ('depth_camera_info', '/camera/depth/camera_info')],
             parameters=[{'use_sim_time': False}]))
+        nodes.append(IncludeLaunchDescription(
+            PythonLaunchDescriptionSource(os.path.join(
+                get_package_share_directory('astra_camera'),
+                'launch', 'depth_to_cloud.launch.py')),
+            launch_arguments={'use_sim_time': 'false'}.items()))
     return nodes
 
 

@@ -25,6 +25,31 @@ La vista Map muestra `/map` de SLAM con durabilidad Transient Local. Para aplica
 
 ## Experimento real
 
+La cámara se activa por defecto en `bringup.launch.py`. Junto al driver se
+lanza el conversor de `astra_camera/launch/depth_to_cloud.launch.py`, que usa
+las funciones de proyección de `depth_image_proc` mediante el nodo
+`astra_camera/depth_to_cloud_node` para publicar `/camera/points` (`PointCloud2`) a partir de
+`/camera/depth/image_raw` y `/camera/depth/camera_info`. Nav2 consume esa nube
+en el costmap local. La salida conserva el frame óptico de la profundidad.
+
+Para actualizar un robot que ya tiene este workspace compilado:
+
+```bash
+sudo apt-get update
+sudo apt-get install ros-foxy-depth-image-proc
+cd ~/husarion_ws
+source /opt/ros/foxy/setup.bash
+source install/setup.bash
+colcon build --packages-select astra_camera rosbot_pro_bringup --symlink-install
+source install/setup.bash
+```
+
+`launch_rosbot.sh` sigue arrancando el bringup, SLAM y navegación como antes;
+no necesita un comando adicional para la conversión. `start_camera:=false`
+desactiva tanto la cámara como el conversor. La conversión usa los parámetros
+de calibración publicados por el driver; su precisión y las TF deben validarse
+con la cámara física.
+
 En el robot, con el workspace compilado allí:
 
 ```bash
