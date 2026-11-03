@@ -77,6 +77,45 @@ desactiva tanto la cámara como el conversor. La conversión usa los parámetros
 de calibración publicados por el driver; su precisión y las TF deben validarse
 con la cámara física.
 
+### Lectura de odometría por rosserial
+
+El puente serie usa lectura no bloqueante e interpreta incrementalmente las
+tramas: conserva fragmentos entre llamadas y procesa varias tramas por turno.
+El temporizador sigue a 10 ms, con límites por turno de 5 ms, 64 tramas y 16 KiB
+leídos, comprobados entre operaciones. Ya no espera 1 ms por cada mensaje ni
+espera a que llegue una trama incompleta. Los checksums se comprueban antes de
+entregar el contenido; los fragmentos que caducan permiten resincronizar el
+flujo. La espera de sincronización usa un reloj monotónico. Las respuestas de
+hora mantienen el protocolo rosserial y los stamps de `/pose`, `/odom` y TF
+siguen siendo los originales del firmware: no se sustituye su fecha por la de
+recepción para ocultar retrasos.
+
+El UART se abre con exclusión de pyserial para impedir que dos instancias de
+este puente lo abran simultáneamente. En una renegociación se reutilizan los
+publicadores que no han cambiado. El cierre del nodo libera el puerto.
+
+Para actualizar esta parte, copiar `src/rosbot_ros` al robot, detener el
+lanzamiento anterior y compilar el paquete cuyo nombre ROS es `rosbot_description`:
+
+```bash
+cd ~/husarion_ws
+source /opt/ros/foxy/setup.bash
+source install/setup.bash
+colcon build --packages-select rosbot_description --symlink-install \
+  --parallel-workers 1 --cmake-args -DCMAKE_BUILD_TYPE=Release
+source install/setup.bash
+./launch_rosbot.sh
+```
+
+Comprobar un único propietario con `sudo fuser -v /dev/ttyS4`. Tras unos 30 s,
+medir `ros2 topic delay /pose`, `/scan` y `/odom` directamente en el robot,
+con el mismo dominio/RMW. Sus desfases deben ser pequeños y no crecer durante
+la ejecución. Las pruebas con UART virtual verifican un flujo mixto superior
+a 100 tramas/s, fragmentación, errores de checksum, presupuestos de trabajo,
+exclusión del puerto, renegociación y conservación exacta de timestamps.
+La sincronización efectiva del firmware y el rendimiento físico deben
+confirmarse con esas mediciones en el robot.
+
 En el robot, con el workspace compilado allí:
 
 ```bash

@@ -64,6 +64,7 @@ install(TARGETS rosbot_tf
 install(PROGRAMS 
   scripts/rosserial_node.py
   scripts/serialclient.py
+  scripts/serial_protocol.py
   DESTINATION lib/${PROJECT_NAME}
 )
 
@@ -73,6 +74,9 @@ install(DIRECTORY
 )
 
 if(BUILD_TESTING)
+  find_package(ament_cmake_pytest REQUIRED)
+  ament_add_pytest_test(serial_transport test/test_serial_transport.py TIMEOUT 45
+    ENV ROS_DOMAIN_ID=170 ROS_LOCALHOST_ONLY=1)
   find_package(ament_lint_auto REQUIRED)
   # the following line skips the linter which checks for copyrights
   # uncomment the line when a copyright and license is not present in all source files

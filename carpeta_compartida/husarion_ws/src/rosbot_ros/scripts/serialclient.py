@@ -53,6 +53,7 @@ from rosserial.std_msgs.msg import Time
 from rosserial.rosserial_msgs.msg import TopicInfo
 from rosserial.rosserial_msgs.msg import Log
 from rosserial.rosserial_msgs.srv import RequestParamRequest, RequestParamResponse
+from serial_protocol import SerialFrameDecoder
 
 ERROR_MISMATCHED_PROTOCOL = "Mismatched protocol version in packet: lost sync or rosserial_python is from different ros release than the rosserial client"
 ERROR_NO_SYNC = "no sync with device"
@@ -357,6 +358,14 @@ class SerialClient(Node):
         self.last_read = self.get_clock().now()
         self.last_write = self.get_clock().now()
         self.timeout = timeout
+        self.decoder = SerialFrameDecoder(timeout=timeout)
+        self.lastsync_monotonic = time.monotonic()
+        self.last_rx_warning = 0.0
+        self.last_read_error = 0.0
+        # Bound work per timer turn so other callbacks (including writes) can run.
+        self.read_time_budget = 0.005
+        self.read_packet_budget = 64
+        self.read_byte_budget = 16384
         self.synced = False
         self.fix_pyserial_for_test = fix_pyserial_for_test
 
@@ -374,12 +383,12 @@ class SerialClient(Node):
                 try:
                     if self.fix_pyserial_for_test:
                         # see https://github.com/pyserial/pyserial/issues/59
-                        self.port = Serial(self.port.value, self.baud.value, timeout=self.timeout, write_timeout=10, rtscts=True, dsrdtr=True)
+                        self.port = Serial(self.port.value, self.baud.value, timeout=0, write_timeout=10, rtscts=True, dsrdtr=True, exclusive=True)
                     else:
-                        self.port = Serial(self.port.value, self.baud.value, timeout=self.timeout, write_timeout=10)
+                        self.port = Serial(self.port.value, self.baud.value, timeout=0, write_timeout=10, exclusive=True)
                 except SerialException as e:
-                    self.get_logger().error("Error opening serial")
-                    return
+                    self.get_logger().error("Error opening serial: %s" % e)
+                    raise
 
         if not rclpy.ok():
             return
@@ -414,6 +423,8 @@ class SerialClient(Node):
     def requestTopics(self):
         """ Determine topics to subscribe/publish. """
         self.get_logger().info('Requesting topics...')
+        self.decoder.reset()
+        self.lastsync_monotonic = time.monotonic()
 
         # TODO remove if possible
         if not self.fix_pyserial_for_test:
@@ -432,118 +443,65 @@ class SerialClient(Node):
         self.write_queue.put(self.header + self.protocol_ver + b"\x00\x00\xff\x0b\x00\xf4")
         self.get_logger().info("Sending tx stop request")
 
-    def tryRead(self, length):
-        try:
-            read_start = time.time()
-            bytes_remaining = length
-            result = bytearray()
-            while bytes_remaining != 0 and time.time() - read_start < self.timeout:
-                with self.read_lock:
-                    received = self.port.read(bytes_remaining)
-                if len(received) != 0:
-                    self.last_read = self.get_clock().now()
-                    result.extend(received)
-                    bytes_remaining -= len(received)
-                else:
-                    time.sleep(0.01)
-
-            if bytes_remaining != 0:
-                raise IOError("Returned short (expected %d bytes, received %d instead)." % (length, length - bytes_remaining))
-
-            return bytes(result)
-        except Exception as e:
-            raise IOError("Serial Port read failure: %s" % e)
-
     def read_timer_callback(self):
-        """ Forward recieved messages to appropriate publisher. """
-
-        # Handle reading.
-        data = ''
-        read_step = None
-        if (self.get_clock().now() - self.lastsync).nanoseconds*1e-9 > (self.timeout * 3):
-            if self.synced:
-                self.get_logger().error("Lost sync with device, restarting...")
-            else:
-                self.get_logger().error("Unable to sync with device; possible link problem or link software version mismatch such as hydro rosserial_python with groovy Arduino")
-            self.lastsync_lost = self.get_clock().now()
-            self.requestTopics()
-            self.lastsync = self.get_clock().now()
-        # This try-block is here because we make multiple calls to read(). Any one of them can throw
-        # an IOError if there's a serial problem or timeout. In that scenario, a single handler at the
-        # bottom attempts to reconfigure the topics.
+        """Drain complete frames with bounded work; retain incomplete frames for later."""
+        started = time.monotonic()
+        packets = 0
+        bytes_read = 0
         try:
-            with self.read_lock:
-                if self.port.inWaiting() < 1:
-                    return
-            # Find sync flag.
-            flag = [0, 0]
-            read_step = 'syncflag'
-            flag[0] = self.tryRead(1)
-            if (flag[0] != self.header):
-                return
-            # Find protocol version.
-            read_step = 'protocol'
-            flag[1] = self.tryRead(1)
-            if flag[1] != self.protocol_ver:
-                self.get_logger().error("Mismatched protocol version in packet (%s): lost sync or rosserial_python is from different ros release than the rosserial client" % repr(flag[1]))
-                protocol_ver_msgs = {
-                        self.protocol_ver1: 'Rev 0 (rosserial 0.4 and earlier)',
-                        self.protocol_ver2: 'Rev 1 (rosserial 0.5+)',
-                        b'\xfd': 'Some future rosserial version'
-                }
-                if flag[1] in protocol_ver_msgs:
-                    found_ver_msg = 'Protocol version of client is ' + protocol_ver_msgs[flag[1]]
-                else:
-                    found_ver_msg = "Protocol version of client is unrecognized"
-                self.get_logger().info("%s, expected %s" % (found_ver_msg, protocol_ver_msgs[self.protocol_ver]))
-                return
-            # Read message length, checksum (3 bytes)
-            read_step = 'message length'
-            msg_len_bytes = self.tryRead(3)
-            msg_length, _ = struct.unpack("<hB", msg_len_bytes)
-            # Validate message length checksum.
-            if sum(array.array("B", msg_len_bytes)) % 256 != 255:
-                self.get_logger().info("Wrong checksum for msg length, length %d, dropping message." % (msg_length))
-                return
-            # Read topic id (2 bytes)
-            read_step = 'topic id'
-            topic_id_header = self.tryRead(2)
-            topic_id, = struct.unpack("<H", topic_id_header)
-            # Read serialized message data.
-            read_step = 'data'
-            try:
-                msg = self.tryRead(msg_length)
-            except IOError:
-                self.get_logger().info("Packet Failed :  Failed to read msg data")
-                self.get_logger().info("expected msg length is %d", msg_length)
-                raise
-            # Reada checksum for topic id and msg
-            read_step = 'data checksum'
-            chk = self.tryRead(1)
-            checksum = sum(array.array('B', topic_id_header + msg + chk))
-            # Validate checksum.
-            if checksum % 256 == 255:
-                self.synced = True
-                self.lastsync_success = self.get_clock().now()
-                try:
-                    self.callbacks[topic_id](msg)
-                except KeyError:
-                    self.get_logger().error("Tried to publish before configured, topic id %d" % topic_id)
-                    self.requestTopics()
-                time.sleep(0.001)
-            else:
-                self.get_logger().info("wrong checksum for topic id and msg")
-        except IOError as exc:
-            rclpy.get_logger().warn('Last read step: %s' % read_step)
-            rclpy.get_logger().warn('Run loop error: %s' % exc)
-            # One of the read calls had an issue. Just to be safe, request that the client
-            # reinitialize their topics.
-            with self.read_lock:
-                self.port.flushInput()
-            with self.write_lock:
-                self.port.flushOutput()
-            self.requestTopics()
-        # self.txStopRequest()
+            if started - self.lastsync_monotonic > self.timeout * 3:
+                message = ("Lost sync with device, restarting..." if self.synced else
+                           "Unable to sync with device; check the serial link and firmware")
+                self.get_logger().error(message)
+                self.lastsync_lost = self.get_clock().now()
+                self.requestTopics()
+                self.lastsync = self.get_clock().now()
+            while (packets < self.read_packet_budget
+                   and time.monotonic() - started < self.read_time_budget):
+                packet = self.decoder.next_packet(time.monotonic())
+                if packet is not None:
+                    topic_id, payload = packet
+                    self.synced = True
+                    self.lastsync_success = self.get_clock().now()
+                    callback = self.callbacks.get(topic_id)
+                    if callback is None:
+                        self.get_logger().error(
+                            'Tried to publish before configured, topic id %d' % topic_id)
+                        self.requestTopics()
+                        break
+                    callback(payload)
+                    packets += 1
+                    continue
+                if bytes_read >= self.read_byte_budget:
+                    break
+                with self.read_lock:
+                    available = self.port.in_waiting
+                    if not available:
+                        break
+                    data = self.port.read(min(available, 4096,
+                                              self.read_byte_budget - bytes_read))
+                if not data:
+                    break
+                self.decoder.feed(data)
+                bytes_read += len(data)
+                self.last_read = self.get_clock().now()
+        except (SerialException, OSError) as error:
+            if time.monotonic() - self.last_read_error >= 1.0:
+                self.get_logger().error('Serial read failure: %s' % error)
+                self.last_read_error = time.monotonic()
+            self.decoder.reset()
+
+        if self.decoder.errors and time.monotonic() - self.last_rx_warning >= 1.0:
+            self.get_logger().warning('Discarded serial framing data: %s' %
+                                      dict(self.decoder.errors))
+            self.decoder.errors.clear()
+            self.last_rx_warning = time.monotonic()
+
+    def destroy_node(self):
+        # Release the UART and its exclusive lock on orderly shutdown.
+        if hasattr(self.port, 'close'):
+            self.port.close()
+        return super().destroy_node()
 
     def setPublishSize(self, size):
         if self.buffer_out < 0:
@@ -560,7 +518,15 @@ class SerialClient(Node):
         try:
             msg = TopicInfo()
             msg.deserialize(data)
-            pub = Publisher(msg, self)
+            previous = self.serial_publishers.get(msg.topic_id)
+            if (previous is not None and previous.topic == msg.topic_name
+                    and previous.rosserial_message._type == msg.message_type
+                    and previous.rosserial_message._md5sum == msg.md5sum):
+                pub = previous
+            else:
+                pub = Publisher(msg, self)
+                if previous is not None and hasattr(previous, 'publisher'):
+                    self.destroy_publisher(previous.publisher)
             self.get_logger().info("Setup publisher on %s [%s]" % (msg.topic_name, msg.message_type) )
             self.serial_publishers[msg.topic_id] = pub
             self.callbacks[msg.topic_id] = pub.handlePacket
@@ -674,12 +640,12 @@ class SerialClient(Node):
         """ Respond to device with system time. """
         now = self.get_clock().now()
         t = Time()
-        t.data.nsecs = int(now.nanoseconds % 1e9)
-        t.data.secs = int((now.nanoseconds - t.data.nsecs) / 1e9)
+        t.data.secs, t.data.nsecs = divmod(now.nanoseconds, 1000000000)
         data_buffer = io.BytesIO()
         t.serialize(data_buffer)
         self.send( TopicInfo.ID_TIME, data_buffer.getvalue() )
         self.lastsync = self.get_clock().now()
+        self.lastsync_monotonic = time.monotonic()
 
     def handleParameterRequest(self, data):
         """ Send parameters to device. Supports only simple datatypes and arrays of such. """
