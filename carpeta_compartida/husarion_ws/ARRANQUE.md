@@ -32,6 +32,32 @@ las funciones de proyección de `depth_image_proc` mediante el nodo
 `/camera/depth/image_raw` y `/camera/depth/camera_info`. Nav2 consume esa nube
 en el costmap local. La salida conserva el frame óptico de la profundidad.
 
+Para reducir la carga del robot, el conversor toma por defecto un píxel de cada
+dos en cada eje (`pixel_stride=2`) y genera como máximo 5 nubes/s (`max_rate=5.0`).
+Con profundidad de 640×480, publica 320×240 puntos: 76.800 puntos y unos 1,23 MB
+por nube, hasta unos 6,14 MB/s de datos por suscriptor remoto, antes de las
+cabeceras de transporte. Descarta los fotogramas excedentes antes de copiar o
+proyectar; no genera primero una nube completa. Ajusta los intrínsecos de la
+proyección y conserva el timestamp y el frame originales. El muestreo no filtra
+el ruido y reduce el detalle de obstáculos pequeños: validar su detección en
+el robot antes de dar por ajustada la navegación.
+
+El bringup expone `camera_cloud_pixel_stride` y `camera_cloud_max_rate` al
+arrancar. Sus valores predeterminados se aplican también desde `launch_rosbot.sh`,
+sin editar ese script. Para probar sólo el conversor con un driver ya abierto:
+
+```bash
+ros2 launch astra_camera depth_to_cloud.launch.py pixel_stride:=2 max_rate:=5.0
+```
+
+Para recuperar la salida original, usar `pixel_stride:=1 max_rate:=0.0` en ese
+launch, o `camera_cloud_pixel_stride:=1 camera_cloud_max_rate:=0.0` en el bringup.
+Estos límites se configuran al arrancar. No limitan la captura del driver (que
+sigue a 640×480 y 30 FPS solicitados), ni cambian LiDAR, SLAM o parámetros de Nav2.
+La cámara simulada de Gazebo publica su propia nube y no pasa por este conversor.
+Comprobar CPU y continuidad de TF con la nueva configuración: la reducción no
+garantiza por sí sola resolver toda la saturación observada.
+
 Para actualizar un robot que ya tiene este workspace compilado:
 
 ```bash
@@ -40,7 +66,8 @@ sudo apt-get install ros-foxy-depth-image-proc
 cd ~/husarion_ws
 source /opt/ros/foxy/setup.bash
 source install/setup.bash
-colcon build --packages-select astra_camera rosbot_pro_bringup --symlink-install
+colcon build --packages-select astra_camera rosbot_pro_bringup \
+  --symlink-install --parallel-workers 1 --cmake-args -DCMAKE_BUILD_TYPE=Release
 source install/setup.bash
 ```
 
