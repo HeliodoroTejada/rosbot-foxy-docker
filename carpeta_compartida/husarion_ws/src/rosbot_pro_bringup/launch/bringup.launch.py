@@ -1,15 +1,19 @@
 """Alternative to rosbot_pro.launch.py: do not run both together."""
 import math
+import os
+from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, OpaqueFunction
+from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, OpaqueFunction
+from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 
 
 DEFAULTS = {
-    'start_base': 'true', 'start_lidar': 'true', 'start_camera': 'false',
+    'start_base': 'true', 'start_lidar': 'true', 'start_camera': 'true',
     'command_watchdog': 'true', 'command_timeout': '0.5',
     'camera_width': '640', 'camera_height': '480', 'camera_fps': '30',
+    'camera_cloud_pixel_stride': '2', 'camera_cloud_max_rate': '5.0',
     'publish_wheel_frames': 'true',
     'serial_port': '/dev/ttyS4', 'serial_baud': '525000',
     'lidar_port': '/dev/ttyUSB0', 'lidar_baud': '256000',
@@ -84,6 +88,11 @@ def setup(context):
         for key in ('camera_width', 'camera_height', 'camera_fps'):
             if int(cfg[key]) <= 0:
                 raise ValueError(key + ' must be a positive integer')
+        if int(cfg['camera_cloud_pixel_stride']) <= 0:
+            raise ValueError('camera_cloud_pixel_stride must be a positive integer')
+        cloud_rate = float(cfg['camera_cloud_max_rate'])
+        if not math.isfinite(cloud_rate) or cloud_rate < 0:
+            raise ValueError('camera_cloud_max_rate must be finite and >= 0')
         # No name override: this executable creates astra_camera and astra_camera_.
         nodes.append(Node(
             package='astra_camera', executable='astra_camera_node', output='screen',
@@ -94,6 +103,15 @@ def setup(context):
                         ('depth', '/camera/depth/image_raw'),
                         ('depth_camera_info', '/camera/depth/camera_info')],
             parameters=[{'use_sim_time': False}]))
+        nodes.append(IncludeLaunchDescription(
+            PythonLaunchDescriptionSource(os.path.join(
+                get_package_share_directory('astra_camera'),
+                'launch', 'depth_to_cloud.launch.py')),
+            launch_arguments={
+                'use_sim_time': 'false',
+                'pixel_stride': cfg['camera_cloud_pixel_stride'],
+                'max_rate': cfg['camera_cloud_max_rate'],
+            }.items()))
     return nodes
 
 
