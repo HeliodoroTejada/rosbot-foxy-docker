@@ -35,3 +35,25 @@ xhost +SI:localuser:$(id -un)
 cd ~/carpeta_compartida/husarion_ws
 ./simulacion.sh
 ```
+
+
+## Robot Real
+Dentro del rosbot se lanza con un servicio todos los nodos de Ros al arrancar el robot. Para abrir Rviz en el contenedor en el portatil:
+
+Dar permisos en el host para que el contenedor abra ventanas graficas, se ejecuta en un terminal fuera del contenedor
+```bash
+xhost +SI:localuser:$(id -un)
+```
+Entrar al contenedor si no lo hemos hecho
+```bash
+docker start ubuntu20_foxy_rosbot	==> Arrancar contenedor si no lo hemos hecho
+docker exec -it ubuntu20_foxy_rosbot bash	==> Abrir terminal si no lo hemos hecho
+```
+Lanzar configuracion de Rviz
+```bash
+ros2 run rviz2 rviz2 \
+  -d ~/carpeta_compartida/husarion_ws/config/rviz_config.rviz \
+  --ros-args -p use_sim_time:=false
+```
+Se le deben comandar topics del tipo 2D Goal Pose
+Esperar un poco hasta que salgan los puntos del lidar en rojo para comandarle el primer punto
