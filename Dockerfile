@@ -56,6 +56,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libudev-dev \
     && rm -rf /var/lib/apt/lists/*
 
+# SDK de Claude para rosbot_telegram_ai. Con Python 3.8 pip instala la última versión compatible.
+RUN python3 -m pip install --no-cache-dir anthropic
+
 RUN groupadd --gid ${USER_GID} ${USERNAME} \
     && useradd \
         --uid ${USER_UID} \
@@ -73,6 +76,11 @@ RUN echo "source /usr/share/gazebo/setup.bash" \
     >> /home/${USERNAME}/.bashrc
 
 USER ${USERNAME}
+
+# Claude Code para rosbot_telegram_ai (backend claude_code). Se inicia sesión
+# una vez dentro del contenedor ejecutando `claude`.
+RUN curl -fsSL https://claude.ai/install.sh | bash \
+    && echo 'export PATH="$HOME/.local/bin:$PATH"' >> /home/${USERNAME}/.bashrc
 
 WORKDIR /home/${USERNAME}/carpeta_compartida
 

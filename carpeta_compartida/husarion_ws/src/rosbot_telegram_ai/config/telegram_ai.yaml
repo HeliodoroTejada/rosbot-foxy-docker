@@ -1,0 +1,45 @@
+telegram_ai:
+  ros__parameters:
+    # Chats de Telegram que pueden mandar al robot, separados por comas.
+    # Escribe /id al bot (en privado o en el grupo) para saber el id; los de grupo son negativos.
+    # En un grupo el bot sólo atiende comandos (/parar...), menciones (@RosbotitoBot ...)
+    # y respuestas a sus mensajes.
+    allowed_chat_ids: "-1004101014957,7016339465"
+
+    # Topics de cámara a escuchar (se usa la imagen más reciente de cualquiera).
+    # Real: /camera/color/image_raw. En Gazebo comprueba con: ros2 topic list | grep image
+    image_topics: "/camera/color/image_raw,/camera/rgb/image_raw,/camera/image_raw"
+    camera_on_demand: true        # suscribirse a la cámara sólo al pedir una foto (ahorra red)
+    scan_topic: "/scan"
+    cmd_vel_topic: "/cmd_vel"
+
+    # Límites de seguridad.
+    max_linear: 0.25              # m/s
+    max_angular: 1.0              # rad/s
+    max_duration: 60.0            # s por orden de movimiento
+    obstacle_stop_distance: 0.30  # m; 0 desactiva la parada por obstáculo al avanzar
+
+    # Claude.
+    # claude_code: usa Claude Code (`claude -p`) con la cuenta en la que iniciaste sesión.
+    # api: usa ANTHROPIC_API_KEY (pago por uso).
+    backend: "claude_code"
+    claude_path: ""               # vacío = buscar `claude` en el PATH o en ~/.local/bin
+    claude_code_model: "opus"     # opus | sonnet | haiku (medido: opus es el más rápido aquí)
+    claude_code_effort: "low"     # low = responde antes; medium/high = piensa más
+    claude_code_timeout: 120.0    # s por respuesta
+    session_max_turns: 40         # tras N mensajes se reinicia Claude (acumula imágenes)
+    max_steps: 15                 # pasos máximos del bucle ver->decidir->actuar por petición
+
+    # Más sensores y navegación.
+    odom_topic: "/odom"
+    battery_topic: "/battery"
+    map_topic: "/map"             # se pide sólo cuando hace falta
+    map_frame: "map"
+    base_frame: "base_link"
+    nav_action: "navigate_to_pose"  # Nav2, lo mismo que "2D Goal Pose" en RViz
+    nav_timeout: 180.0            # s máximos por destino
+    model: "claude-opus-5-5"      # sólo backend api
+    effort: "low"                 # sólo backend api: low | medium | high
+    history_turns: 6              # intercambios recordados por chat
+    image_max_width: 800
+    send_photos: true             # manda por Telegram la foto que mira Claude
