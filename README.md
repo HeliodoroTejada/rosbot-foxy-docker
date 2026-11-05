@@ -57,3 +57,29 @@ ros2 run rviz2 rviz2 \
 ```
 Se le deben comandar topics del tipo 2D Goal Pose
 Esperar un poco hasta que salgan los puntos del lidar en rojo para comandarle el primer punto
+
+## Alternativas de DWB en RViz
+
+El workspace incluye `dwb_core` de Nav2 Foxy 0.4.7 con una corrección para que
+el display **MarkerArray** de `/marker` funcione sin mantener un suscriptor
+auxiliar de `/evaluation`. La procedencia y las pruebas están en
+[dwb_core/UPSTREAM.md](carpeta_compartida/husarion_ws/src/dwb_core/UPSTREAM.md).
+
+Después de incorporar este paquete, compilarlo dentro del contenedor:
+
+```bash
+cd ~/carpeta_compartida/husarion_ws
+source /opt/ros/foxy/setup.bash
+colcon build --symlink-install --packages-select dwb_core \
+  --cmake-args -DCMAKE_BUILD_TYPE=Release
+source install/setup.bash
+```
+
+Relanzar la navegación para que cargue la biblioteca corregida. Los scripts
+`simulacion.sh` y `launch_rosbot.sh` ya cargan este overlay. Para el robot real,
+compilar también el paquete en `~/husarion_ws` del robot.
+
+En `controller_server.ros__parameters.FollowPath`, activar
+`publish_trajectories: True`. En RViz, usar **MarkerArray → `/marker`** para las
+alternativas y **Path → `/plan`** para el camino global. Durante simulación,
+RViz debe usar `use_sim_time:=true`; para el robot físico, `false`.
