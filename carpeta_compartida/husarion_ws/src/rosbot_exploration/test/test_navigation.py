@@ -248,9 +248,11 @@ def test_rejected_paths_never_reach_navigator_and_attempts_are_bounded(stack):
     fake.reject_plans = True
     node = add_explorer(executor, preplan=True, max_attempts=2, retry_radius=10.0)
     try:
-        wait_for(lambda: node.state.startswith('BLOCKED'))
+        wait_for(lambda: fake.plan_count == 2 and node.state.startswith('WAITING_RETRY'))
         assert not fake.nav_started.is_set()
         assert node.memory.attempts[0].failures == 2
+        time.sleep(0.5)
+        assert fake.plan_count == 2
     finally:
         close_explorer(node, executor)
 
@@ -283,7 +285,7 @@ def test_plan_in_wrong_frame_is_rejected(stack):
     fake.wrong_plan_frame = True
     node = add_explorer(executor, preplan=True, max_attempts=1, retry_radius=10.0)
     try:
-        wait_for(lambda: node.state.startswith('BLOCKED'))
+        wait_for(lambda: fake.plan_count == 1 and node.state.startswith('WAITING_RETRY'))
         assert not fake.nav_started.is_set()
     finally:
         close_explorer(node, executor)

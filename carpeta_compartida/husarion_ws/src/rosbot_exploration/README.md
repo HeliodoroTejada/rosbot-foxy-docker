@@ -5,6 +5,10 @@ ya arrancados. Detecta límites entre espacio libre y desconocido y elige una
 posición conocida libre, alcanzable y con margen para el robot. Envía una tarea
 `NavigateToPose`; Nav2 planifica, controla y recupera esa tarea. No publica velocidades.
 
+Compara varias posiciones por frontera mediante una estimación de información
+visible, coste de desplazamiento/giro y proximidad al recorrido reciente. Los
+descartes se asocian también a regiones de frontera y se revisan si cambia la escena.
+
 El flujo sigue el patrón de tareas de
 [BasicNavigator de Nav2 Humble](https://github.com/ros-navigation/navigation2/blob/humble/nav2_simple_commander/nav2_simple_commander/robot_navigator.py):
 esperar aceptación, observar feedback, esperar el resultado y cancelar el objetivo
@@ -78,7 +82,7 @@ ros2 service call /exploration/stop std_srvs/srv/Trigger '{}'
 ```
 
 `pause` y `stop` cancelan el objetivo. `resume` conserva la memoria de intentos;
-`start` la reinicia. Esperar a completar una cancelación antes de reanudar.
+`start` reinicia intentos y recorrido reciente. Esperar a completar una cancelación antes de reanudar.
 Mientras explora, reservar los objetivos de Nav2 para este nodo. Detener la
 exploración antes de enviar destinos desde RViz u otro cliente.
 
@@ -90,6 +94,8 @@ Estados principales: `IDLE`, `WAITING`, `PLANNING`, `EXPLORING`, `CANCELING`,
 `PAUSED`, `STOPPED`, `WAITING_RETRY`, `BLOCKED`, `CHECKING_COMPLETION`, `COMPLETED`.
 En RViz se puede añadir un `MarkerArray` en `/exploration/frontiers` y un `Pose`
 en `/exploration/goal`. No se modifica vuestra configuración RViz.
+`/exploration/candidates` publica JSON con los candidatos válidos, ganancia
+esperada en m², distancia estimada, coste de giro, penalización de revisita y puntuación.
 
 ## Configuración
 
@@ -108,12 +114,21 @@ Parámetros principales:
 
 | Parámetro | Valor inicial | Función |
 |---|---:|---|
-| `robot_radius` | 0.25 m | Radio que engloba la huella y un margen |
+| `robot_radius` | 0.25 m | Radio del modo circular y de la preplanificación estricta |
+| `use_rectangular_footprint` | true | Comprueba la huella rectangular orientada en los destinos |
+| `footprint_length` / `footprint_width` | 0.28 / 0.32 m | Dimensiones de la huella actual de Nav2 |
+| `footprint_padding` | 0.02 m | Margen adicional alrededor del rectángulo |
 | `min_frontier_size` | 0.35 m | Descarta fronteras pequeñas |
 | `goal_standoff` | 0.45 m | Separación preferida respecto a la frontera |
 | `max_standoff` | 0.9 m | Radio de búsqueda de una posición libre |
 | `min_goal_distance` | 0.5 m | Desplazamiento mínimo; debe superar la tolerancia XY de Nav2 |
 | `planner_frequency` | 0.5 Hz | Frecuencia máxima de búsqueda |
+| `information_radius` | 3.0 m | Horizonte local de la estimación de visibilidad |
+| `information_rays` | 72 | Rayos por candidato, en 360° |
+| `information_candidates` | 12 | Máximo de candidatos evaluados con rayos por búsqueda |
+| `candidates_per_frontier` | 3 | Alternativas espaciales por componente de frontera |
+| `gain_weight` | 0.5 | Exponente de la ganancia estimada en la puntuación |
+| `turn_weight` / `revisit_weight` | 0.35 / 1.0 | Penalizan giros y destinos próximos al recorrido reciente |
 | `preplan` | false | Activa la comprobación estricta adicional con `ComputePathToPose` |
 | `behavior_tree` | auto | Árbol del paquete seleccionado para cada tarea de navegación |
 | `lookahead_distance` | 1.0 m | Prepara el siguiente destino al aproximarse al actual |
@@ -124,13 +139,46 @@ Parámetros principales:
 | `progress_timeout` | 30 s | Cancela un objetivo sin acercamiento suficiente |
 | `navigation_timeout` | 180 s | Duración máxima de un objetivo |
 | `retry_delay` | 30 s | Exclusión temporal tras un fallo |
-| `max_attempts` | 3 | Máximo de fallos o visitas de una posición antes de excluirla hasta `start` |
+| `max_attempts` | 3 | Fallos/visitas antes de aplicar una exclusión prolongada |
+| `blocked_retry_delay` | 180 s | Exclusión prolongada de regiones fallidas; nunca es permanente |
+| `visit_cooldown` | 90 s | Descanso de posiciones visitadas reiteradamente |
+| `retry_frontier_radius` | 0.75 m | Agrupa intentos fallidos sobre la misma región de frontera |
+| `scene_change_ratio` | 0.1 | Cambio mínimo de conocimiento local para reconsiderar un descarte |
 | `completion_confirmations` | 3 | Mapas distintos sin candidatos alcanzables |
 
-La búsqueda conserva el radio de 25 cm para las posiciones candidatas y su
-conectividad en espacio conocido. La trayectoria y el seguimiento utilizan el
-footprint, sensores y costmaps ya configurados en Nav2. La cámara sigue
-interviniendo a través del controlador y costmap local existentes.
+La búsqueda usa conectividad aproximada con un disco inscrito en el rectángulo
+acolchado. Comprueba después todas las celdas que intersectan la huella orientada
+en cada posición candidata, incluidos su interior y los contactos en esquinas.
+Esto admite pasos que el círculo de 50 cm de diámetro descartaba; no sustituye
+la comprobación de trayectorias y maniobras de giro de Nav2. Mantener dimensiones
+coherentes con la huella configurada en Nav2. La cámara continúa interviniendo
+a través del controlador y costmap local existentes.
+
+La visibilidad se estima con rayos que se detienen ante obstáculos conocidos y
+los límites del mapa. Se integra el área desconocida potencialmente observable,
+con pesos en m² y pasos radiales de media celda. Es una estimación: no predice
+paredes aún desconocidas. Sólo se evalúan los candidatos más prometedores para
+mantener un coste acotado y conservar la anticipación de destinos.
+
+La puntuación (menor es mejor) es:
+
+```text
+(0.8 + distance_weight * distancia + turn_weight * giros + revisit_weight * revisita)
+    / max(area_visible, 0.25) ** gain_weight
+```
+
+La distancia es una aproximación por conectividad, no una llamada adicional al
+planificador. El coste de giro considera orientación actual, dirección al destino
+y orientación final. El recorrido reciente utiliza muestras separadas 30 cm y
+una penalización que decae con el tiempo.
+
+Los fallos excluyen posiciones y regiones de frontera, evitando probar desde
+otro punto la misma zona bloqueada. Antes de buscar se comparan parches métricos
+locales del mapa y costmap con los guardados al fallar. La aparición de conocimiento
+nuevo o la retirada neta de obstáculos puede reactivar la región; los timestamps,
+redimensionados del mapa y pequeños desplazamientos de paredes no bastan. Las
+exclusiones prolongadas también vencen por tiempo. Las visitas satisfactorias
+nunca producen una exclusión permanente.
 
 Con `preplan: true` se añade una comprobación conservadora del camino antes de
 navegar: todos sus segmentos deben permanecer en espacio conocido con el radio
@@ -218,18 +266,20 @@ ROS_DOMAIN_ID=181 ROS_LOCALHOST_ONLY=1 python3 \
 ```
 
 El informe incluye distancia, mapa conocido, fracción de tiempo en movimiento,
-mayor pausa, mediana del tiempo entre destinos, resultados y errores de Nav2.
+mayor pausa, mediana del tiempo entre destinos, giros acumulados, superficie nueva
+por metro/minuto, resultados y errores de Nav2. La fracción en movimiento incluye
+rotaciones; por sí sola no mide eficiencia de cobertura.
 
 Las pruebas se ejecutan en el contenedor Foxy con Nav2 0.4.7 y SLAM Toolbox 2.4.1,
 sin red y con el repositorio montado en solo lectura. El comportamiento en el
 robot físico y la cobertura completa del mundo requieren validación adicional.
 
-### Comparación de continuidad
+### Medición previa de continuidad
 
 Dos ejecuciones consecutivas de 180 s en `willow_garage.world`, con los mismos
 lanzamientos y parámetros de SLAM/Nav2, sin interfaz gráfica ni cámara:
 
-| Métrica | Versión anterior | Versión actual |
+| Métrica | Versión inicial | Con anticipación, antes de selección por información |
 |---|---:|---:|
 | Distancia recorrida antes del cierre | 18,19 m | 35,59 m |
 | Fracción de tiempo en movimiento desde el primer objetivo | 54,0 % | 97,7 % |
@@ -246,7 +296,7 @@ Las métricas se toman antes de solicitar el cierre; la distancia puede crecer
 ligeramente durante el frenado. Son mediciones de esta comparación, no una
 garantía para otros mundos, cargas o el robot físico.
 
-`colcon test` pasa las **26 pruebas**: geometría, conectividad, exclusiones,
+La validación previa pasó **26 pruebas**: geometría, conectividad, exclusiones,
 cancelación por pérdida de datos, parada con Ctrl+C/SIGHUP, muerte del trabajador,
 cierre durante aceptación, preplanificación opcional, anticipación sin preempción
 y cambios transitorios/persistentes del destino.
@@ -255,3 +305,35 @@ El cálculo de distancias sobre una malla de 719×481 celdas pasó de 1,5492 s a
 0,1646 s en una medición aislada, con matrices de salida idénticas. No añade
 dependencias nuevas. La optimización sustituye accesos escalares de NumPy dentro
 del recorrido por índices enteros y listas de Python.
+
+### Validación de selección por información y huella rectangular
+
+`colcon test` pasa **37 pruebas**, sin errores ni omisiones. Las nuevas pruebas
+comprueban oclusión por paredes, unidades métricas de información, penalizaciones
+de giro/revisita, huella girada y obstáculos en su interior, un pasillo de 45 cm
+en el detector de candidatos, reactivación al retirar obstáculos, agrupación de
+fallos por región y estabilidad ante redimensionados/desplazamientos pequeños.
+
+En otra comparación consecutiva de 180 s por versión, en el mismo mundo y sin
+interfaz gráfica ni cámara, se obtuvieron estas métricas antes del cierre:
+
+| Métrica | Con anticipación | Con información, memoria y rectángulo |
+|---|---:|---:|
+| Superficie conocida nueva | 315,01 m² | 452,81 m² |
+| Superficie nueva por metro recorrido | 8,37 m²/m | 12,27 m²/m |
+| Superficie nueva por minuto desde el primer objetivo | 108,03 m²/min | 153,64 m²/min |
+| Distancia recorrida | 37,64 m | 36,89 m |
+| Giro acumulado | 29,46 rad | 31,10 rad |
+| Giro por 100 m² nuevos | 9,35 rad | 6,87 rad |
+| Tiempo en movimiento | 98,4 % | 96,0 % |
+| Mayor pausa | 0,30 s | 0,90 s |
+| Mediana entre llegada y siguiente objetivo | 0,24 s | 0,24 s |
+| Objetivos enviados / alcanzados | 12 / 11 | 24 / 22 |
+| Abortos / errores en rosout | 0 / 0 | 0 / 0 |
+| Cancelación y parada al cerrar | Confirmadas | Confirmadas |
+
+En esta ejecución mejoró la superficie descubierta por metro y por minuto. El
+giro total aumentó ligeramente; el giro relativo a la superficie descubierta se
+redujo. Las métricas describen una ejecución por versión y no garantizan el mismo
+resultado en otros mundos, con cámara o en el robot físico. La comprobación de
+pasos estrechos es geométrica; las maniobras completas dependen de Nav2.

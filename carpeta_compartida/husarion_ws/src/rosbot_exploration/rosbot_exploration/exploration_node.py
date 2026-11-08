@@ -4,6 +4,7 @@ Run through the `explore` supervisor; it cancels the owned goal even if this
 worker is killed while Nav2 is still accepting or executing that goal.
 """
 from concurrent.futures import ThreadPoolExecutor
+import json
 import math
 import os
 from pathlib import Path
@@ -36,6 +37,7 @@ from visualization_msgs.msg import Marker, MarkerArray
 from .frontier_search import Grid, clearance_mask, path_is_safe, search
 from .goal_selection import CompletionGate, GoalMemory
 from .lease import clear_lease, write_lease
+from .viewpoints import footprint_is_free
 
 
 DEFAULTS = {
@@ -47,9 +49,13 @@ DEFAULTS = {
     'lifecycle_nodes': ['/bt_navigator', '/planner_server', '/controller_server'],
     'planner_id': 'GridBased',
     'planner_frequency': 0.5, 'robot_radius': 0.25,
+    'use_rectangular_footprint': True,
+    'footprint_length': 0.28, 'footprint_width': 0.32, 'footprint_padding': 0.02,
     'free_threshold': 25, 'costmap_max_cost': 80,
     'min_frontier_size': 0.35, 'goal_standoff': 0.45, 'max_standoff': 0.9,
     'distance_weight': 1.0, 'gain_weight': 0.5, 'start_tolerance': 0.3,
+    'information_radius': 3.0, 'information_rays': 72, 'information_candidates': 12,
+    'candidates_per_frontier': 3, 'turn_weight': 0.35, 'revisit_weight': 1.0,
     'min_goal_distance': 0.5,
     'map_timeout': 10.0, 'costmap_timeout': 5.0, 'transform_timeout': 2.0,
     'planning_timeout': 8.0, 'navigation_timeout': 180.0,
@@ -60,6 +66,8 @@ DEFAULTS = {
     'progress_timeout': 30.0, 'progress_distance': 0.1,
     'retry_delay': 30.0, 'retry_radius': 0.5, 'max_attempts': 3,
     'revisit_delay': 10.0, 'completion_confirmations': 3, 'completion_delay': 5.0,
+    'blocked_retry_delay': 180.0, 'visit_cooldown': 90.0,
+    'scene_change_ratio': 0.1, 'retry_frontier_radius': 0.75,
     'max_map_cells': 2000000, 'cancel_timeout': 8.0,
 }
 
@@ -98,10 +106,13 @@ class ExplorationNode(Node):
         self.next_goal_time = 0.0
         self.pool = ThreadPoolExecutor(max_workers=1)
         self.memory = GoalMemory(self.cfg['retry_radius'], self.cfg['retry_delay'],
-                                 self.cfg['max_attempts'], self.cfg['revisit_delay'])
+                                 self.cfg['max_attempts'], self.cfg['revisit_delay'],
+                                 self.cfg['blocked_retry_delay'], self.cfg['visit_cooldown'],
+                                 self.cfg['scene_change_ratio'], self.cfg['retry_frontier_radius'])
         self.completion = CompletionGate(self.cfg['completion_confirmations'],
                                          self.cfg['completion_delay'])
         self.target = None
+        self.robot_yaw = 0.0
         self.operation = None  # planning or navigating, including pending acceptance
         self.goal_handle = None
         self.cancel_requested = False
@@ -130,6 +141,7 @@ class ExplorationNode(Node):
         self.state_pub = self.create_publisher(String, '~/state', retained)
         self.markers_pub = self.create_publisher(MarkerArray, '~/frontiers', retained)
         self.goal_pub = self.create_publisher(PoseStamped, '~/goal', 1)
+        self.candidate_pub = self.create_publisher(String, '~/candidates', retained)
         for command in ('start', 'pause', 'resume', 'stop'):
             self.create_service(Trigger, '~/' + command,
                                 lambda request, response, cmd=command: self._control(cmd, response))
@@ -138,7 +150,8 @@ class ExplorationNode(Node):
         self._state('WAITING' if self.enabled else 'IDLE', 'Use ~/start to explore')
 
     def _validate_parameters(self):
-        integers = ('max_attempts', 'completion_confirmations', 'max_map_cells')
+        integers = ('max_attempts', 'completion_confirmations', 'max_map_cells',
+                    'information_rays', 'information_candidates', 'candidates_per_frontier')
         for key in integers:
             if not isinstance(self.cfg[key], int) or isinstance(self.cfg[key], bool) or self.cfg[key] < 1:
                 raise ValueError(key + ' must be a positive integer')
@@ -147,7 +160,8 @@ class ExplorationNode(Node):
                 value = self.cfg[key]
                 if not math.isfinite(value) or value < 0:
                     raise ValueError(key + ' must be finite and non-negative')
-                if value == 0 and key not in ('gain_weight', 'completion_delay', 'handoff_delay'):
+                if value == 0 and key not in ('gain_weight', 'completion_delay', 'handoff_delay',
+                                              'footprint_padding', 'turn_weight', 'revisit_weight'):
                     raise ValueError(key + ' must be positive')
             elif isinstance(default, str) and not self.cfg[key] and key != 'behavior_tree':
                 raise ValueError(key + ' must not be empty')
@@ -157,6 +171,10 @@ class ExplorationNode(Node):
             raise ValueError('goal_standoff must be >= robot_radius')
         if self.cfg['max_standoff'] < self.cfg['goal_standoff']:
             raise ValueError('max_standoff must be >= goal_standoff')
+        if not 8 <= self.cfg['information_rays'] <= 720 or self.cfg['information_candidates'] > 64:
+            raise ValueError('Visibility budget: 8..720 rays, at most 64 candidates')
+        if not 0 < self.cfg['scene_change_ratio'] <= 1:
+            raise ValueError('scene_change_ratio must be in (0, 1]')
 
     def _parameters_changed(self, parameters):
         if any(p.name in DEFAULTS for p in parameters):
@@ -207,7 +225,7 @@ class ExplorationNode(Node):
             return response
         else:
             if command == 'start':
-                self.memory.attempts.clear()
+                self.memory.clear()
             self.enabled = True
             self.completion.reset()
             self.next_search = 0.0
@@ -259,6 +277,8 @@ class ExplorationNode(Node):
         age = (self.get_clock().now() - stamp).nanoseconds * 1e-9
         if stamp.nanoseconds == 0 or age > self.cfg['transform_timeout'] or age < -0.5:
             raise ValueError('Robot TF is stale or uses a different clock')
+        q = transform.transform.rotation
+        self.robot_yaw = math.atan2(2 * (q.w * q.z + q.x * q.y), 1 - 2 * (q.y * q.y + q.z * q.z))
         return transform.transform.translation.x, transform.transform.translation.y
 
     def _tick(self):
@@ -279,6 +299,7 @@ class ExplorationNode(Node):
             self._state('WAITING', str(error))
             return
         self._harvest_search(now)
+        self.memory.observe_pose(robot[0], robot[1], now)
         if self.operation:
             timeout = self.cfg['planning_timeout'] if self.operation == 'planning' else self.cfg['navigation_timeout']
             if now - self.started_at > timeout:
@@ -316,6 +337,10 @@ class ExplorationNode(Node):
             candidates = [f for f in result.frontiers if self.memory.allowed(f, now) and
                           math.hypot(f.x - robot[0], f.y - robot[1]) >= self.cfg['min_goal_distance'] and
                           self._target_valid(f)]
+            self.candidate_pub.publish(String(data=json.dumps([
+                dict(x=float(f.x), y=float(f.y), yaw=f.yaw, information_m2=f.information_gain,
+                     distance_m=f.distance, turn_rad=f.turn, revisit=f.revisit, score=f.score)
+                for f in candidates])))
             if candidates:
                 self.completion.reset()
                 self.target = candidates[0]
@@ -327,7 +352,7 @@ class ExplorationNode(Node):
                 # Completion is established from the actual robot pose, never
                 # from an anticipated arrival point or an outdated candidate.
                 self.next_search = 0.0
-            elif self.memory.temporarily_blocked(now):
+            elif (result.frontiers or result.excluded) and self.memory.temporarily_blocked(now):
                 self.completion.reset()
                 self._state('WAITING_RETRY', 'Viewpoints are temporarily excluded')
             elif result.frontiers or result.excluded:
@@ -347,8 +372,14 @@ class ExplorationNode(Node):
             options = {key: self.cfg[key] for key in (
                 'robot_radius', 'free_threshold', 'min_frontier_size', 'goal_standoff',
                 'max_standoff', 'distance_weight', 'gain_weight', 'start_tolerance',
-                'min_goal_distance')}
+                'min_goal_distance', 'information_radius', 'information_rays', 'information_candidates',
+                'candidates_per_frontier', 'turn_weight', 'revisit_weight',
+                'use_rectangular_footprint', 'footprint_length', 'footprint_width', 'footprint_padding')}
+            self.memory.update_scene(self.grid, self.costmap, now)
             options['excluded_positions'] = self.memory.exclusions(now)
+            options['excluded_frontiers'] = self.memory.frontier_exclusions(now)
+            options['recent_positions'] = self.memory.recent_positions(now)
+            options['robot_yaw'] = self.target.yaw if prefetch else self.robot_yaw
             if prefetch:
                 options['excluded_positions'].append((self.target.x, self.target.y, self.cfg['retry_radius']))
             options['costmap'] = self.costmap
@@ -374,15 +405,21 @@ class ExplorationNode(Node):
         row, col = self.grid.cell(target.x, target.y)
         if not self.grid.contains(row, col):
             return False
-        radius = int(math.ceil(self.cfg['robot_radius'] / self.grid.resolution + 1))
-        h, w = self.grid.data.shape
-        r0, r1, c0, c1 = row - radius, row + radius + 1, col - radius, col + radius + 1
-        if r0 < 0 or c0 < 0 or r1 > h or c1 > w:
-            return False
-        free = ((self.grid.data[r0:r1, c0:c1] >= 0) &
-                (self.grid.data[r0:r1, c0:c1] <= self.cfg['free_threshold']))
-        if not clearance_mask(free, self.grid.resolution, self.cfg['robot_radius'])[radius, radius]:
-            return False
+        if self.cfg['use_rectangular_footprint']:
+            if not footprint_is_free(self.grid, target.x, target.y, target.yaw,
+                                     self.cfg['footprint_length'], self.cfg['footprint_width'],
+                                     self.cfg['footprint_padding'], self.cfg['free_threshold']):
+                return False
+        else:
+            radius = int(math.ceil(self.cfg['robot_radius'] / self.grid.resolution + 1))
+            h, w = self.grid.data.shape
+            r0, r1, c0, c1 = row - radius, row + radius + 1, col - radius, col + radius + 1
+            if r0 < 0 or c0 < 0 or r1 > h or c1 > w:
+                return False
+            free = ((self.grid.data[r0:r1, c0:c1] >= 0) &
+                    (self.grid.data[r0:r1, c0:c1] <= self.cfg['free_threshold']))
+            if not clearance_mask(free, self.grid.resolution, self.cfg['robot_radius'])[radius, radius]:
+                return False
         cr, cc = self.costmap.cell(target.x, target.y)
         return (self.costmap.contains(cr, cc) and
                 0 <= self.costmap.data[cr, cc] <= self.cfg['costmap_max_cost'])
@@ -491,7 +528,7 @@ class ExplorationNode(Node):
 
     def _finished(self, success, reason):
         if self.target:
-            self.memory.record(self.target, time.monotonic(), success)
+            self.memory.record(self.target, time.monotonic(), success, self.grid, self.costmap)
         self._clear_operation()
         self.next_search = 0.0
         self.next_goal_time = time.monotonic() + (self.cfg['handoff_delay'] if success
@@ -499,7 +536,7 @@ class ExplorationNode(Node):
         self._state('SELECTING', reason)
 
     def _fail(self, reason):
-        self.memory.record(self.target, time.monotonic())
+        self.memory.record(self.target, time.monotonic(), grid=self.grid, costmap=self.costmap)
         self._cancel()
         self._state('CANCELING', reason)
 
@@ -530,11 +567,15 @@ class ExplorationNode(Node):
         clear.header.stamp = self.get_clock().now().to_msg()
         clear.action = Marker.DELETEALL
         markers.markers.append(clear)
-        for index, frontier in enumerate(frontiers):
+        seen = set()
+        for frontier in frontiers:
+            if id(frontier.cells) in seen:
+                continue
+            seen.add(id(frontier.cells))
             marker = Marker()
             marker.header.frame_id = self.cfg['map_frame']
             marker.header.stamp = self.get_clock().now().to_msg()
-            marker.ns, marker.id, marker.type = 'frontiers', index, Marker.POINTS
+            marker.ns, marker.id, marker.type = 'frontiers', len(seen), Marker.POINTS
             marker.pose.orientation.w = 1.0
             marker.scale.x = marker.scale.y = source_grid.resolution
             marker.color.r, marker.color.g, marker.color.a = 0.2, 1.0, 1.0

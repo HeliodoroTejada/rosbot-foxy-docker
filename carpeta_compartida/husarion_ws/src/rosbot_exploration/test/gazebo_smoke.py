@@ -31,8 +31,12 @@ class Probe(Node):
     def __init__(self):
         super().__init__('exploration_smoke_probe')
         self.distance = 0.0
+        self.rotation = 0.0
+        self.last_yaw = None
+        self.started = time.monotonic()
         self.last_position = None
         self.known = []
+        self.known_areas = []
         self.goals = 0
         self.state = ''
         self.statuses = []
@@ -58,12 +62,19 @@ class Probe(Node):
 
     def map(self, message):
         self.known.append(int(np.count_nonzero(np.asarray(message.data) >= 0)))
+        self.known_areas.append(self.known[-1] * message.info.resolution ** 2)
 
     def odom(self, message):
         point = message.pose.pose.position
         if self.last_position:
             self.distance += math.hypot(point.x - self.last_position[0], point.y - self.last_position[1])
         self.last_position = (point.x, point.y)
+        q = message.pose.pose.orientation
+        yaw = math.atan2(2 * (q.w * q.z + q.x * q.y), 1 - 2 * (q.y * q.y + q.z * q.z))
+        if self.last_yaw is not None:
+            delta = yaw - self.last_yaw
+            self.rotation += abs(math.atan2(math.sin(delta), math.cos(delta)))
+        self.last_yaw = yaw
         now = time.monotonic()
         moving = (abs(message.twist.twist.linear.x) > 0.01 or
                   abs(message.twist.twist.angular.z) > 0.03)
@@ -112,7 +123,13 @@ class Probe(Node):
         now = time.monotonic()
         idle = max(self.max_idle, now - self.idle_since if self.idle_since else 0.0)
         elapsed = now - self.first_goal_time if self.first_goal_time else 0.0
+        area_gain = max(self.known_areas) - self.known_areas[0] if self.known_areas else 0.0
         return dict(goals=self.goals, travelled_m=round(self.distance, 3),
+                    observed_s=round(now - self.started, 3),
+                    rotation_rad=round(self.rotation, 3),
+                    new_known_area_m2=round(area_gain, 3),
+                    new_area_m2_per_m=round(area_gain / self.distance, 3) if self.distance else 0.0,
+                    new_area_m2_per_min=round(area_gain * 60 / elapsed, 3) if elapsed else 0.0,
                     known_initial=self.known[0] if self.known else 0,
                     known_max=max(self.known) if self.known else 0,
                     moving_fraction=round(self.moving_time / elapsed, 3) if elapsed else 0.0,

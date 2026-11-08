@@ -119,7 +119,8 @@ def test_map_growth_changes_indices_without_changing_world_goal_memory():
     assert not memory.allowed(target, 11.0)
     assert memory.allowed(target, 12.0)
     memory.record(target, 13.0)
-    assert not memory.allowed(target, 1000.0)
+    assert not memory.allowed(target, 14.0)
+    assert memory.allowed(target, 1000.0)
 
 
 def test_completion_requires_distinct_maps_and_elapsed_confirmation_time():
