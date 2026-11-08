@@ -1,0 +1,64 @@
+/**:
+  ros__parameters:
+    use_sim_time: false
+    autostart: false
+    map_topic: /map
+    costmap_topic: /global_costmap/costmap
+    map_frame: map
+    robot_base_frame: base_link
+    navigate_action: /navigate_to_pose
+    planner_action: /compute_path_to_pose
+    # Follow the NavigateToPose task lifecycle; Nav2 performs planning itself.
+    preplan: false
+    # Packaged Foxy tree, selected per goal (not a Nav2 parameter change).
+    behavior_tree: auto
+    planner_id: GridBased
+    lifecycle_nodes: [/bt_navigator, /planner_server, /controller_server]
+    planner_frequency: 0.5
+    # Legacy circular mode and optional strict preplanning radius.
+    robot_radius: 0.25
+    use_rectangular_footprint: true
+    footprint_length: 0.28
+    footprint_width: 0.32
+    footprint_padding: 0.02
+    free_threshold: 25
+    costmap_max_cost: 80
+    min_frontier_size: 0.35
+    goal_standoff: 0.45
+    max_standoff: 0.9
+    distance_weight: 1.0
+    gain_weight: 0.5
+    information_radius: 3.0
+    information_rays: 72
+    information_candidates: 12
+    candidates_per_frontier: 3
+    turn_weight: 0.35
+    revisit_weight: 1.0
+    start_tolerance: 0.3
+    # Must exceed Nav2's current xy_goal_tolerance (0.25 m).
+    min_goal_distance: 0.5
+    map_timeout: 10.0
+    costmap_timeout: 5.0
+    transform_timeout: 2.0
+    planning_timeout: 8.0
+    path_endpoint_tolerance: 0.5
+    lookahead_distance: 1.0
+    lookahead_max_age: 5.0
+    handoff_delay: 0.2
+    failure_backoff: 0.5
+    goal_invalid_timeout: 1.5
+    navigation_timeout: 180.0
+    progress_timeout: 30.0
+    progress_distance: 0.1
+    retry_delay: 30.0
+    retry_radius: 0.5
+    max_attempts: 3
+    revisit_delay: 10.0
+    blocked_retry_delay: 180.0
+    visit_cooldown: 90.0
+    scene_change_ratio: 0.1
+    retry_frontier_radius: 0.75
+    completion_confirmations: 3
+    completion_delay: 5.0
+    max_map_cells: 2000000
+    cancel_timeout: 8.0
