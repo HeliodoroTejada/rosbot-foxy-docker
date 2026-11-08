@@ -1,0 +1,36 @@
+<!--
+  Exploration-specific Foxy tree. Navigation retains periodic replanning and
+  recovery; action acknowledgements may take up to 1000 ms under Gazebo load.
+  Foxy's inherited 10 ms timeout otherwise throws "send_goal failed".
+  This file is selected through NavigateToPose.Goal.behavior_tree, without
+  changing the Nav2 launch files or parameters.
+-->
+<root main_tree_to_execute="Explore">
+  <BehaviorTree ID="Explore">
+    <RecoveryNode number_of_retries="4" name="ExploreRecovery">
+      <PipelineSequence name="ExploreWithReplanning">
+        <RateController hz="1.0">
+          <RecoveryNode number_of_retries="1" name="PlanRecovery">
+            <ComputePathToPose goal="{goal}" path="{path}" planner_id="GridBased" server_timeout="1000"/>
+            <ClearEntireCostmap service_name="global_costmap/clear_entirely_global_costmap" server_timeout="1000"/>
+          </RecoveryNode>
+        </RateController>
+        <RecoveryNode number_of_retries="1" name="ControlRecovery">
+          <FollowPath path="{path}" controller_id="FollowPath" server_timeout="1000"/>
+          <ClearEntireCostmap service_name="local_costmap/clear_entirely_local_costmap" server_timeout="1000"/>
+        </RecoveryNode>
+      </PipelineSequence>
+      <ReactiveFallback name="ExploreRecoveryFallback">
+        <GoalUpdated/>
+        <RoundRobin name="ExploreRecoveryActions">
+          <Sequence name="ClearCostmaps">
+            <ClearEntireCostmap service_name="local_costmap/clear_entirely_local_costmap" server_timeout="1000"/>
+            <ClearEntireCostmap service_name="global_costmap/clear_entirely_global_costmap" server_timeout="1000"/>
+          </Sequence>
+          <Spin spin_dist="1.57" server_timeout="1000"/>
+          <Wait wait_duration="2" server_timeout="1000"/>
+        </RoundRobin>
+      </ReactiveFallback>
+    </RecoveryNode>
+  </BehaviorTree>
+</root>
