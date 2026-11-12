@@ -1,5 +1,7 @@
 import math
 import os
+import socket
+import subprocess
 
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
@@ -16,6 +18,30 @@ def _interfaz_por_defecto():
         return min(por_defecto, key=lambda r: int(r[6]))[0] if por_defecto else ''
     except OSError:
         return ''
+
+
+def _resolver_robot(nombre):
+    """IP del robot a partir de su nombre ('ubuntu'). '' si no se encuentra.
+
+    Primero con el resolvedor normal; en WSL, si falla, se lo pregunta a Windows,
+    que sí encuentra los equipos de la red local por nombre.
+    """
+    for candidato in (nombre, nombre + '.local'):
+        try:
+            return socket.gethostbyname(candidato)
+        except OSError:
+            pass
+    if os.path.isdir('/mnt/c/Windows'):
+        orden = ("([System.Net.Dns]::GetHostAddresses('%s') | "
+                 "? AddressFamily -eq 'InterNetwork' | Select -First 1).IPAddressToString" % nombre)
+        try:
+            salida = subprocess.run(['powershell.exe', '-NoProfile', '-Command', orden],
+                                    capture_output=True, text=True, timeout=15).stdout.strip()
+            socket.inet_aton(salida)
+            return salida
+        except (OSError, subprocess.SubprocessError, ValueError):
+            pass
+    return ''
 
 
 def _cyclone_real(robot_ip):
@@ -44,6 +70,9 @@ def _nodo(context):
     if modo == 'real':
         # Mismo DDS que rosbot.service en el robot (launch_rosbot.sh).
         robot_ip = LaunchConfiguration('robot_ip').perform(context)
+        if robot_ip == 'auto':
+            robot_ip = _resolver_robot(LaunchConfiguration('robot_host').perform(context))
+            print('[telegram_ai.launch] IP del robot: %s' % (robot_ip or 'no encontrada (sólo multicast)'))
         entorno = {'RMW_IMPLEMENTATION': 'rmw_cyclonedds_cpp', 'ROS_LOCALHOST_ONLY': '0',
                    'CYCLONEDDS_URI': os.environ.get('CYCLONEDDS_URI', _cyclone_real(robot_ip))}
     return [Node(
@@ -62,8 +91,11 @@ def generate_launch_description():
     share = get_package_share_directory('rosbot_telegram_ai')
     return LaunchDescription([
         DeclareLaunchArgument('modo', default_value='sim', description="'sim' o 'real'"),
-        DeclareLaunchArgument('robot_ip', default_value='10.105.34.33',
-                              description="IP del robot en modo real ('' = sólo multicast)"),
+        DeclareLaunchArgument('robot_ip', default_value='auto',
+                              description="IP del robot en modo real ('auto' = buscarla por "
+                                          "su nombre, '' = sólo multicast)"),
+        DeclareLaunchArgument('robot_host', default_value='ubuntu',
+                              description='Nombre del robot en la red (para robot_ip:=auto)'),
         DeclareLaunchArgument('params_file',
                               default_value=os.path.join(share, 'config', 'telegram_ai.yaml')),
         DeclareLaunchArgument('env_file',

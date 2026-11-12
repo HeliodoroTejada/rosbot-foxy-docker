@@ -24,7 +24,7 @@ telegram_ai:
     # api: usa ANTHROPIC_API_KEY (pago por uso).
     backend: "claude_code"
     claude_path: ""               # vacío = buscar `claude` en el PATH o en ~/.local/bin
-    claude_code_model: "opus"     # opus | sonnet | haiku (medido: opus es el más rápido aquí)
+    claude_code_model: "sonnet"   # opus | sonnet | haiku
     claude_code_effort: "low"     # low = responde antes; medium/high = piensa más
     claude_code_timeout: 120.0    # s por respuesta
     session_max_turns: 40         # tras N mensajes se reinicia Claude (acumula imágenes)
