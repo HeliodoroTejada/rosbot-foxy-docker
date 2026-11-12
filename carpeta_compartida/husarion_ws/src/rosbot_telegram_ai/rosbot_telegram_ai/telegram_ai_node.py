@@ -399,10 +399,6 @@ class TelegramAINode(Node):
                           for orden in ('start', 'pause', 'resume', 'stop')}
         self.estado_explo = ''
         self.chat_explo = None
-        # El explorador corre en el robot; si no está en marcha se arranca por SSH.
-        robot_ip = p('robot_ip', '').value
-        usuario = p('robot_ssh_user', 'husarion').value
-        self.ssh_robot = '%s@%s' % (usuario, robot_ip) if robot_ip and usuario else ''
         self.create_subscription(String, ns + '/state', self._al_estado_explo,
                                  QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL))
 
@@ -942,14 +938,9 @@ class TelegramAINode(Node):
             return 'modo de exploración desconocido: %s' % modo, False
         cliente = self.srv_explo[orden]
         if not cliente.wait_for_service(timeout_sec=3.0):
-            if orden != 'start':
-                return 'el explorador no está en marcha', False
-            error = self._arrancar_explorador_robot(chat_id)
-            if error:
-                return error, False
-            if not cliente.wait_for_service(timeout_sec=45.0):
-                return ('el explorador del robot no ha arrancado a tiempo '
-                        '(su registro está en /tmp/exploration.log del robot)'), False
+            # El explorador se arranca desde dentro del robot; el bot no entra en él.
+            return ('el explorador no está en marcha en el robot: hay que lanzarlo allí '
+                    '(ros2 launch rosbot_exploration exploration.launch.py)'), False
         if orden in ('start', 'resume'):
             self.parar('cambio a exploración')
             self._cancelar_navegacion()  # Nav2 queda reservado para el explorador
@@ -960,46 +951,6 @@ class TelegramAINode(Node):
         self.get_logger().info('Exploración %s: %s' % (orden, respuesta.message))
         return ('%s (%s)' % (respuesta.message or orden, self.estado_explo or 'sin estado'),
                 respuesta.success)
-
-    # Perfil DDS de launch_rosbot.sh, para que el explorador hable con Nav2 como el resto.
-    CYCLONE_ROBOT = ('<CycloneDDS><Domain><General><MaxMessageSize>1400B</MaxMessageSize>'
-                     '<FragmentSize>1280B</FragmentSize></General><Discovery>'
-                     '<MaxAutoParticipantIndex>50</MaxAutoParticipantIndex></Discovery>'
-                     '</Domain></CycloneDDS>')
-
-    def _arrancar_explorador_robot(self, chat_id):
-        """Lanza rosbot_exploration en el robot por SSH (proceso suelto, sin tocar archivos).
-
-        Devuelve un texto de error o '' si se ha lanzado.
-        """
-        if not self.ssh_robot:
-            return 'el explorador no está en marcha y no sé la IP del robot para arrancarlo'
-        self._avisar(chat_id, 'Arrancando el explorador en el robot…')
-        remoto = (
-            'pgrep -f "[r]osbot_exploration/explore" >/dev/null || ('
-            'source /opt/ros/foxy/setup.bash && source ~/husarion_ws/install/setup.bash && '
-            'export ROS_DOMAIN_ID=%s ROS_LOCALHOST_ONLY=0 RMW_IMPLEMENTATION=rmw_cyclonedds_cpp '
-            "CYCLONEDDS_URI='%s' && setsid nohup ros2 launch rosbot_exploration "
-            'exploration.launch.py use_sim_time:=false autostart:=false '
-            '> /tmp/exploration.log 2>&1 < /dev/null &)'
-            % (os.environ.get('ROS_DOMAIN_ID', '0'), self.CYCLONE_ROBOT))
-        try:
-            proc = subprocess.run(
-                ['ssh', '-n', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10', self.ssh_robot,
-                 'bash -c %s' % json.dumps(remoto)],
-                stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=15)
-        except subprocess.TimeoutExpired:
-            # El explorador queda suelto (setsid) y a veces la sesión SSH no se cierra sola;
-            # no pasa nada: se comprueba después si su servicio aparece.
-            self.get_logger().info('SSH no se ha cerrado solo; sigo esperando al explorador')
-            return ''
-        except (OSError, subprocess.SubprocessError) as e:
-            return 'no he podido entrar al robot por SSH: %s' % e
-        if proc.returncode != 0:
-            return 'no he podido arrancar el explorador en el robot: %s' % (
-                proc.stderr.strip().splitlines() or ['error desconocido'])[-1]
-        self.get_logger().info('Explorador lanzado en el robot (%s)' % self.ssh_robot)
-        return ''
 
     def _parar_exploracion(self):
         """Para la exploración si está activa (antes de mover el robot a mano o con ir_a)."""
