@@ -3,9 +3,9 @@ import os
 import socket
 import subprocess
 
-from ament_index_python.packages import get_package_share_directory
+from ament_index_python.packages import PackageNotFoundError, get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, OpaqueFunction
+from launch.actions import DeclareLaunchArgument, OpaqueFunction, SetEnvironmentVariable
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 
@@ -75,16 +75,34 @@ def _nodo(context):
             print('[telegram_ai.launch] IP del robot: %s' % (robot_ip or 'no encontrada (sólo multicast)'))
         entorno = {'RMW_IMPLEMENTATION': 'rmw_cyclonedds_cpp', 'ROS_LOCALHOST_ONLY': '0',
                    'CYCLONEDDS_URI': os.environ.get('CYCLONEDDS_URI', _cyclone_real(robot_ip))}
-    return [Node(
+    # Se aplica a todos los procesos de este launch (bot y explorador).
+    acciones = [SetEnvironmentVariable(k, v) for k, v in entorno.items()]
+    acciones.append(Node(
         package='rosbot_telegram_ai', executable='telegram_ai_node', name='telegram_ai',
-        output='screen', additional_env=entorno,
+        output='screen',
         parameters=[LaunchConfiguration('params_file').perform(context), {
             'use_sim_time': modo == 'sim',
             # En el robot real el lidar va girado 180º (laser_yaw en bringup.launch.py).
             'lidar_yaw': -math.pi if modo == 'real' else 0.0,
             'env_file': LaunchConfiguration('env_file').perform(context),
         }],
-    )]
+    ))
+
+    # Explorador por fronteras (paquete rosbot_exploration del equipo), parado hasta
+    # que el bot llame a /exploration/start. No se usa su launch porque cierra todo el
+    # launch si el explorador termina; así un fallo suyo no tumba el bot.
+    if LaunchConfiguration('exploracion').perform(context) == 'true':
+        try:
+            share_explo = get_package_share_directory('rosbot_exploration')
+        except PackageNotFoundError:
+            print('[telegram_ai.launch] rosbot_exploration no está compilado: sin exploración')
+        else:
+            acciones.append(Node(
+                package='rosbot_exploration', executable='explore', output='screen',
+                parameters=[os.path.join(share_explo, 'config', 'exploration.yaml'),
+                            {'use_sim_time': modo == 'sim', 'autostart': False}],
+                sigterm_timeout='15', sigkill_timeout='5'))
+    return acciones
 
 
 def generate_launch_description():
@@ -96,6 +114,8 @@ def generate_launch_description():
                                           "su nombre, '' = sólo multicast)"),
         DeclareLaunchArgument('robot_host', default_value='ubuntu',
                               description='Nombre del robot en la red (para robot_ip:=auto)'),
+        DeclareLaunchArgument('exploracion', default_value='true', choices=['true', 'false'],
+                              description='Lanzar también el explorador (rosbot_exploration)'),
         DeclareLaunchArgument('params_file',
                               default_value=os.path.join(share, 'config', 'telegram_ai.yaml')),
         DeclareLaunchArgument('env_file',

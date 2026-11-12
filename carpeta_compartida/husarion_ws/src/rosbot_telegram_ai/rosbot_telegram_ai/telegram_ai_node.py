@@ -48,6 +48,8 @@ from rclpy.action import ActionClient
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy, qos_profile_sensor_data
 from sensor_msgs.msg import BatteryState, Image, LaserScan, Range
+from std_msgs.msg import String
+from std_srvs.srv import Trigger
 
 from .mapa import dibujar_mapa
 from .sesion_claude import SesionClaude
@@ -101,6 +103,11 @@ directamente responde siempre. No acapares la conversación.
 del mapa con Nav2, que planifica la ruta y esquiva obstáculos. Úsalo para ir a sitios \
 lejanos o del mapa ("vuelve al inicio", "ve a la otra habitación"); para movimientos \
 cortos usa girar/avanzar.
+  {"tipo": "explorar", "modo": "empezar"|"pausar"|"reanudar"|"parar"}  exploración \
+autónoma: el robot busca solo las zonas del mapa sin descubrir y va a ellas con Nav2 hasta \
+completar el mapa ("explora", "descubre la planta", "mapea esto"). Sigue sola en segundo \
+plano y se avisa al chat al terminar. Si después te piden ir a un sitio o moverte, la \
+exploración se para sola. El estado sale en "Exploración:" del estado del robot.
   {"tipo": "parar"}
   {"tipo": "mirar"}     te llegará una foto nueva de la cámara y volverás a decidir.
   {"tipo": "ver_mapa"}  te llegará el mapa (cuadrícula en metros; tú en rojo con una \
@@ -116,7 +123,7 @@ pase se recorta. El robot se para solo si al moverse hay un obstáculo a menos d
 {dist_parada} m delante (o detrás si retrocede). Ante órdenes ambiguas o peligrosas, \
 pregunta o elige lo más prudente."""
 
-TIPOS_ACCION = ['girar', 'avanzar', 'mover', 'girar_en_circulos', 'ir_a', 'parar',
+TIPOS_ACCION = ['girar', 'avanzar', 'mover', 'girar_en_circulos', 'ir_a', 'explorar', 'parar',
                 'mirar', 'ver_mapa']
 ESQUEMA_RESPUESTA = {
     'type': 'object',
@@ -134,6 +141,7 @@ ESQUEMA_RESPUESTA = {
                 'radio': {'type': 'number'},
                 'sentido': {'type': 'string', 'enum': ['izquierda', 'derecha']},
                 'x': {'type': 'number'}, 'y': {'type': 'number'}, 'yaw': {'type': 'number'},
+                'modo': {'type': 'string', 'enum': ['empezar', 'pausar', 'reanudar', 'parar']},
             },
             'required': ['tipo'],
         }},
@@ -384,6 +392,15 @@ class TelegramAINode(Node):
         self.nav = ActionClient(self, NavigateToPose, p('nav_action', 'navigate_to_pose').value)
         self.meta_nav = None      # goal handle en curso
         self.objetivo_nav = None  # (x, y) del destino, para dibujarlo en el mapa
+
+        # Exploración autónoma (nodo rosbot_exploration del equipo).
+        ns = p('exploration_ns', '/exploration').value.rstrip('/')
+        self.srv_explo = {orden: self.create_client(Trigger, '%s/%s' % (ns, orden))
+                          for orden in ('start', 'pause', 'resume', 'stop')}
+        self.estado_explo = ''
+        self.chat_explo = None
+        self.create_subscription(String, ns + '/state', self._al_estado_explo,
+                                 QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL))
 
         self.create_timer(0.05, self._bucle_control)
         self.create_timer(0.1, self._gestionar_camara)
@@ -644,6 +661,8 @@ class TelegramAINode(Node):
             navegando = self.meta_nav is not None
         if navegando:
             lineas.append('Navegando hacia x=%.2f, y=%.2f.' % self.objetivo_nav)
+        if self.estado_explo:
+            lineas.append('Exploración: %s.' % self.estado_explo)
         return '\n'.join(lineas)
 
     def _bloques_contexto(self, texto, camara=True, mapa=False):
@@ -748,6 +767,16 @@ class TelegramAINode(Node):
                 return informe, True
             tipo = accion.get('tipo')
             try:
+                if tipo == 'explorar':
+                    resultado, ok = self._explorar(accion.get('modo', 'empezar'), chat_id)
+                    informe.append('explorar: %s' % resultado)
+                    if not ok:
+                        return informe, True
+                    continue
+                if tipo in ('ir_a', 'mover', 'girar', 'avanzar', 'girar_en_circulos'):
+                    parada = self._parar_exploracion()  # el explorador no debe competir
+                    if parada:
+                        informe.append('exploración parada para obedecer: %s' % parada)
                 if tipo == 'ir_a':
                     # Si es lo último del plan no hace falta esperar: el bot sigue
                     # atendiendo mensajes y avisa al llegar.
@@ -883,6 +912,50 @@ class TelegramAINode(Node):
             meta = self.meta_nav
         if meta is not None:
             self._cancelar_meta(meta)
+
+    # ---------------------------------------------------------- exploración
+    ESTADOS_EXPLORANDO = ('WAITING', 'PLANNING', 'EXPLORING', 'WAITING_RETRY',
+                          'CHECKING_COMPLETION', 'CANCELING')
+    MODOS_EXPLO = {'empezar': 'start', 'pausar': 'pause', 'reanudar': 'resume', 'parar': 'stop'}
+
+    def _al_estado_explo(self, msg):
+        anterior = self.estado_explo.split(':')[0]
+        self.estado_explo = msg.data
+        actual = msg.data.split(':')[0]
+        if actual != anterior and self.chat_explo is not None:
+            avisos = {'COMPLETED': '¡Exploración terminada! Ya no quedan zonas por descubrir.',
+                      'BLOCKED': 'La exploración se ha atascado: %s' % msg.data}
+            if actual in avisos:
+                self._avisar(self.chat_explo, avisos[actual])
+
+    def _explorando(self):
+        return self.estado_explo.split(':')[0] in self.ESTADOS_EXPLORANDO
+
+    def _explorar(self, modo, chat_id):
+        """Llama al servicio de exploración. Devuelve (texto, ok)."""
+        orden = self.MODOS_EXPLO.get(modo)
+        if orden is None:
+            return 'modo de exploración desconocido: %s' % modo, False
+        cliente = self.srv_explo[orden]
+        if not cliente.wait_for_service(timeout_sec=3.0):
+            return 'el explorador no está en marcha', False
+        if orden in ('start', 'resume'):
+            self.parar('cambio a exploración')
+            self._cancelar_navegacion()  # Nav2 queda reservado para el explorador
+            self.chat_explo = chat_id
+        respuesta = self._esperar_futuro(cliente.call_async(Trigger.Request()), 10.0)
+        if respuesta is None:
+            return 'el explorador no ha contestado', False
+        self.get_logger().info('Exploración %s: %s' % (orden, respuesta.message))
+        return ('%s (%s)' % (respuesta.message or orden, self.estado_explo or 'sin estado'),
+                respuesta.success)
+
+    def _parar_exploracion(self):
+        """Para la exploración si está activa (antes de mover el robot a mano o con ir_a)."""
+        if self._explorando():
+            texto, _ = self._explorar('parar', self.chat_explo)
+            return texto
+        return None
 
     # ---------------------------------------------------------- herramientas
     def _ejecutar_herramienta(self, nombre, args, chat_id):
@@ -1042,6 +1115,7 @@ class TelegramAINode(Node):
             self.cancelado.set()
             self.parar()
             self._cancelar_navegacion()
+            threading.Thread(target=self._parar_exploracion, daemon=True).start()
             self._enviar_seguro(chat_id, 'Parado.')
             return
         self.cola.put((chat_id, texto, comando, dirigido))
