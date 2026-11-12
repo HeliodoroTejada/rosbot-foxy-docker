@@ -67,6 +67,7 @@ def _nodo(context):
     if modo not in ('sim', 'real'):
         raise ValueError("modo debe ser 'sim' o 'real'")
     entorno = {}
+    robot_ip = ''
     if modo == 'real':
         # Mismo DDS que rosbot.service en el robot (launch_rosbot.sh).
         robot_ip = LaunchConfiguration('robot_ip').perform(context)
@@ -85,6 +86,7 @@ def _nodo(context):
             # En el robot real el lidar va girado 180º (laser_yaw en bringup.launch.py).
             'lidar_yaw': -math.pi if modo == 'real' else 0.0,
             'env_file': LaunchConfiguration('env_file').perform(context),
+            'robot_ip': robot_ip,  # para arrancar el explorador en el robot por SSH
         }],
     ))
 
@@ -114,8 +116,9 @@ def generate_launch_description():
                                           "su nombre, '' = sólo multicast)"),
         DeclareLaunchArgument('robot_host', default_value='ubuntu',
                               description='Nombre del robot en la red (para robot_ip:=auto)'),
-        DeclareLaunchArgument('exploracion', default_value='true', choices=['true', 'false'],
-                              description='Lanzar también el explorador (rosbot_exploration)'),
+        DeclareLaunchArgument('exploracion', default_value='false', choices=['true', 'false'],
+                              description='Lanzar también un explorador local (normalmente '
+                                          'corre en el robot y el bot lo arranca por SSH)'),
         DeclareLaunchArgument('params_file',
                               default_value=os.path.join(share, 'config', 'telegram_ai.yaml')),
         DeclareLaunchArgument('env_file',
