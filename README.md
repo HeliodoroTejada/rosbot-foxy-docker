@@ -29,15 +29,23 @@ la aplicación gráfica:
 xhost +SI:localuser:$(id -un)
 ```
 
-## Simulación completa
-
+# Simulación completa
+## Lanzar Entorno
 ```bash
 cd ~/carpeta_compartida/husarion_ws
 ./simulacion.sh
 ```
 
+## Lanzar Nodo Exploracion Simulacion
 
-## Robot Real
+```bash
+cd ~/carpeta_compartida/husarion_ws
+source install/setup.sh
+ros2 launch rosbot_exploration exploration.launch.py use_sim_time:=true autostart:=true
+```
+
+
+# Robot Real
 Dentro del rosbot se lanza con un servicio todos los nodos de Ros al arrancar el robot. Para abrir Rviz en el contenedor en el portatil:
 
 Dar permisos en el host para que el contenedor abra ventanas graficas, se ejecuta en un terminal fuera del contenedor
@@ -49,14 +57,20 @@ Entrar al contenedor si no lo hemos hecho
 docker start ubuntu20_foxy_rosbot	==> Arrancar contenedor si no lo hemos hecho
 docker exec -it ubuntu20_foxy_rosbot bash	==> Abrir terminal si no lo hemos hecho
 ```
-Lanzar configuracion de Rviz
+## Lanzar configuracion de Rviz
 ```bash
 ros2 run rviz2 rviz2 \
   -d ~/carpeta_compartida/husarion_ws/config/rviz_config.rviz \
   --ros-args -p use_sim_time:=false
 ```
-Se le deben comandar topics del tipo 2D Goal Pose
-Esperar un poco hasta que salgan los puntos del lidar en rojo para comandarle el primer punto
+Se le deben comandar topics del tipo 2D Goal Pose. Esperar un poco hasta que salgan los puntos del lidar en rojo para comandarle el primer punto
+
+## Lanzar Nodo Exploracion Rosbot
+```bash
+cd ~/carpeta_compartida/husarion_ws
+source install/setup.sh
+ros2 launch rosbot_exploration exploration.launch.py use_sim_time:=false autostart:=true
+```
 
 ## Bot de Telegram con IA (`rosbot_telegram_ai`)
 

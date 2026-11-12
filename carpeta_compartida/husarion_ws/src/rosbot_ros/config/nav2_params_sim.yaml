@@ -64,8 +64,8 @@ controller_server:
       plugin: "dwb_core::DWBLocalPlanner"
       # Keep all motion samples/critics; skip diagnostics during normal use.
       debug_trajectory_details: False
-      publish_evaluation: False
-      publish_trajectories: False
+      publish_evaluation: True
+      publish_trajectories: True
       publish_cost_grid_pc: False
       min_vel_x: 0.0
       min_vel_y: 0.0
@@ -227,7 +227,7 @@ planner_server:
     GridBased:
       plugin: "nav2_navfn_planner/NavfnPlanner"
       tolerance: 0.5
-      use_astar: false
+      use_astar: true
       allow_unknown: true
 
 planner_server_rclcpp_node:
